@@ -418,3 +418,29 @@ Archive progress v2  [topic:7301]
   Next batch    : 0
   Progress file : /home/dima/.openclaw/workspace/ops/archive-progress-7301-v2.json
 ```
+
+## Updated Skill Wrapper Retest — 2026-04-27 01:03 MSK
+
+After updating `archive-context` to call `archive-batch-v2.py`, Dmitrii retested in topic 7301.
+
+Observed reply:
+
+```text
+ARCHIVE-CONTEXT STATUS
+
+Archive progress v2 [topic:7301]
+ Batches done : 0/71 (0%)
+ Raw messages : 10493
+ Deduped msgs : 7094
+ Duplicates : 3399
+ Next batch : 0
+ Progress file : /home/dima/.openclaw/workspace/ops/archive-progress-7301-v2.json
+
+No files were modified.
+```
+
+Conclusion:
+
+- On Codex/gpt55 execution path, `/archive-context 7301 --status` now works end-to-end as a read-only skill wrapper over `archive-batch-v2.py`.
+- Counts continue to change slightly as new topic messages arrive; this is expected.
+- Remaining known limitation: Meridian/MeridianA sessions can still hit `Forwarding to client for execution` and need separate provider/runtime diagnosis or explicit exec fallback.
