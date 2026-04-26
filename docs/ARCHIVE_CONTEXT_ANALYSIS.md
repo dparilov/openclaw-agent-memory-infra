@@ -377,3 +377,44 @@ Next needed fix:
 - Update `~/.openclaw/workspace/skills/archive-context/SKILL.md` to use `archive-batch-v2.py` for `--status` and batch reads.
 - The skill should be a thin wrapper over the script-first implementation in `/home/dima/projects/openclaw-agent-memory-infra/scripts/context_access/archive-batch-v2.py`.
 - Then retest `/archive-context 7301 --status` under Codex and require the v2 stats block.
+
+## Skill Wrapper Updated to v2 — 2026-04-27
+
+Updated local workspace skill:
+
+```text
+/home/dima/.openclaw/workspace/skills/archive-context/SKILL.md
+```
+
+New behavior:
+
+- Valid OpenClaw skill frontmatter retained.
+- `--status` must run:
+
+```bash
+python3 /home/dima/projects/openclaw-agent-memory-infra/scripts/context_access/archive-batch-v2.py <topic> --status
+```
+
+- `--total` and `--batch N` are read-only script wrappers.
+- Real archive/write mode is explicitly marked `[blocked]` until a stable writer contract exists.
+- Skill documents known Meridian/MeridianA forwarding issue and explicit exec fallback.
+
+Verification:
+
+```text
+openclaw skills info archive-context
+→ archive-context ✓ Ready
+Source: openclaw-workspace
+```
+
+Direct v2 status check after update:
+
+```text
+Archive progress v2  [topic:7301]
+  Batches done  : 0/71  (0%)
+  Raw messages  : 10488
+  Deduped msgs   : 7091
+  Duplicates     : 3397
+  Next batch    : 0
+  Progress file : /home/dima/.openclaw/workspace/ops/archive-progress-7301-v2.json
+```
