@@ -586,3 +586,51 @@ Safety:
 Next step:
 
 - Restart only MeridianA (`port 3470`) with `MERIDIAN_OPENCLAW_PASSTHROUGH=0` and test `/archive-context 7301 --status` under a `meridiana/*` model.
+
+## OpenClaw→Assistant Rewrite Hazard — 2026-04-27
+
+MeridianA `openclawAdapter.transformRequestBody()` performs a blanket JSON-string rewrite before sending requests to Anthropic:
+
+```ts
+json = json.replace(/openclaw/gi, (match) => {
+  if (match === match.toUpperCase()) return "ASSISTANT"
+  if (match[0] === match[0].toUpperCase()) return "Assistant"
+  return "assistant"
+})
+```
+
+Intent:
+
+- hide the OpenClaw brand/name from Anthropic detection;
+- avoid non-Claude-Code client detection;
+- tests explicitly assert no `openclaw` remains in transformed body;
+- historical design expected `.assistant` symlink/path resolution to make rewritten paths still work.
+
+Observed hazard:
+
+- User-visible and tool-relevant paths can be rewritten semantically, e.g. `openclaw-agent-memory-infra` becomes `assistant-agent-memory-infra`.
+- This breaks exact path instructions and causes false ENOENT errors.
+- Slash command/skill layers can also be shadowed by Claude command files, adding another source of mismatch.
+
+Recommended direction:
+
+- Do not simply remove the rewrite globally; it exists for a reason and may protect MeridianA coding flow.
+- Make the rewrite scoped/configurable:
+  1. keep brand rewrite in system/prose contexts;
+  2. avoid rewriting path-like substrings or exact user-provided command/path arguments;
+  3. optionally gate path rewriting behind env flag, defaulting to current behavior until validated;
+  4. add regression tests for both detection-avoidance and path-preservation.
+
+Candidate env flags:
+
+```text
+MERIDIAN_OPENCLAW_BRAND_REWRITE=1          # default current behavior
+MERIDIAN_OPENCLAW_REWRITE_PATHS=0          # proposed safer mode
+```
+
+Acceptance test should include:
+
+- `OpenClaw` prose becomes `Assistant` when required;
+- `/home/dima/projects/openclaw-agent-memory-infra/README.md` remains unchanged in tool/path contexts;
+- `.openclaw` workspace paths either remain valid or have a verified symlink fallback;
+- no new `Forwarding to client for execution` regression.
