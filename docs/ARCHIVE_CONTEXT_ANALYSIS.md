@@ -216,3 +216,36 @@ Interpretation:
 - Direct script execution works in the problematic Telemost agent session.
 - The remaining execution problem is likely in slash command / skill wrapper invocation, not in Python/path/permissions/tool availability.
 - Counts changed slightly because new messages arrived in topic 7301 between checks; this is expected for live transcript state.
+
+## Skill Wrapper Check — 2026-04-27
+
+User asked the Telemost topic 7301 agent to run:
+
+```text
+/archive-context 7301 --status
+```
+
+Observed reply:
+
+```text
+I can't use the tool "skill" here because it isn't available. I need to stop retrying it and answer without that tool.
+```
+
+Additional read-only diagnostics:
+
+- `exec` tool works in topic 7301.
+- `archive-batch-v2.py` runs successfully through that exec path.
+- The current session `skillsSnapshot` for topic 7301 contains only bundled OpenClaw skills:
+  - `gh-issues`, `github`, `healthcheck`, `node-connect`, `skill-creator`, `taskflow`, `taskflow-inbox-triage`, `video-frames`, `weather`.
+- It does **not** contain `archive-context`, `read-context`, or `read-topic`.
+- `openclaw skills list` shows only OpenClaw-bundled skills as ready; local workspace directories under `~/.openclaw/workspace/skills/*` are not currently registered as eligible OpenClaw skills.
+
+Interpretation:
+
+- The failure is not Python/path/permission/tool execution.
+- The immediate failure is that `archive-context` is not an eligible loaded OpenClaw skill in the agent prompt/snapshot.
+- The agent then incorrectly attempts to call a nonexistent tool named `skill` and reports that the tool is unavailable.
+- Therefore `/archive-context` must not depend on a non-existent skill tool. It needs either:
+  1. a real OpenClaw-bundled/installed skill registration path, or
+  2. a text-command/native-command route, or
+  3. a documented explicit exec fallback.
