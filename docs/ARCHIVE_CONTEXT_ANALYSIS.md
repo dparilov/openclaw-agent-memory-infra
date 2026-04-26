@@ -666,3 +666,56 @@ The test fails as expected, proving the path-rewrite bug.
 Running the full `openclaw-adapter.test.ts` currently has unrelated pre-existing failures around billing-header insertion shifting system block indices. Those are not caused by this red test. The relevant new failure is specifically the `MERIDIAN_OPENCLAW_REWRITE_PATHS=0` path preservation case.
 
 No runtime/dist change and no restart were performed for this red-test step.
+
+## Scoped Path Rewrite Patch — 2026-04-27 late night
+
+With Dmitrii approval, patched MeridianA source and current dist bundle to make exact path preservation possible without disabling the whole OpenClaw→Assistant brand rewrite.
+
+MeridianA source repo:
+
+```text
+/home/dima/meridian-openclaw-arto
+```
+
+Source changes:
+
+- `src/proxy/adapters/openclaw.ts`
+  - added `envDisabled()` helper;
+  - added `preserveOpenClawPathTokens()` helper;
+  - when `MERIDIAN_OPENCLAW_REWRITE_PATHS=0|false|no`, path-like tokens containing `openclaw` are temporarily protected before prose/brand rewrite and restored afterwards;
+  - default behavior remains unchanged unless the env var is set.
+- `src/__tests__/openclaw-adapter.test.ts`
+  - added regression test `preserves explicit project paths when MERIDIAN_OPENCLAW_REWRITE_PATHS=0`.
+
+Runtime dist bundle also patched for the current deployed build:
+
+```text
+dist/cli-39bfednj.js
+```
+
+Validation:
+
+```text
+bun test src/__tests__/openclaw-adapter.test.ts -t 'preserves explicit project paths'
+→ 1 pass
+
+node --check /home/dima/meridian-openclaw-arto/dist/cli-39bfednj.js
+→ OK
+```
+
+MeridianA source commit:
+
+```text
+Make OpenClaw path rewrite optional for exact paths
+```
+
+No MeridianA restart was performed in this step.
+
+Next runtime test requires service env override(s), likely:
+
+```text
+MERIDIAN_OPENCLAW_PASSTHROUGH=0
+MERIDIAN_OPENCLAW_REWRITE_PATHS=0
+```
+
+applied to `meridian-arto.service` only, followed by restart and baseline matrix retest.
