@@ -634,3 +634,35 @@ Acceptance test should include:
 - `/home/dima/projects/openclaw-agent-memory-infra/README.md` remains unchanged in tool/path contexts;
 - `.openclaw` workspace paths either remain valid or have a verified symlink fallback;
 - no new `Forwarding to client for execution` regression.
+
+## Red Test for Path Rewrite — 2026-04-27
+
+Added a red regression test to MeridianA source only:
+
+```text
+/home/dima/meridian-openclaw-arto/src/__tests__/openclaw-adapter.test.ts
+```
+
+Test name:
+
+```text
+preserves explicit project paths when MERIDIAN_OPENCLAW_REWRITE_PATHS=0
+```
+
+Expected desired behavior:
+
+```text
+Read /home/dima/projects/openclaw-agent-memory-infra/README.md
+```
+
+Current actual behavior:
+
+```text
+Read /home/dima/projects/assistant-agent-memory-infra/README.md
+```
+
+The test fails as expected, proving the path-rewrite bug.
+
+Running the full `openclaw-adapter.test.ts` currently has unrelated pre-existing failures around billing-header insertion shifting system block indices. Those are not caused by this red test. The relevant new failure is specifically the `MERIDIAN_OPENCLAW_REWRITE_PATHS=0` path preservation case.
+
+No runtime/dist change and no restart were performed for this red-test step.
