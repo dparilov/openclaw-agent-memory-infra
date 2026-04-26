@@ -303,3 +303,49 @@ openclaw skills check
 ```
 
 Important: existing sessions may still have old `skillsSnapshot` without `archive-context`. A new/reset session or skill snapshot refresh may be required before the topic 7301 agent sees it in `<available_skills>`.
+
+## Post-registration Topic 7301 Test — 2026-04-27 00:58 MSK
+
+After adding valid frontmatter to `archive-context`, Dmitrii reset/new-started topic 7301 and asked for `/archive-context 7301 --status`.
+
+Observed from topic 7301 agent:
+
+```text
+Да, вижу archive-context в списке доступных skills. Загружаю SKILL.md.
+Skill вернул "Forwarding to client for execution" ...
+Все инструменты возвращают "Forwarding to client for execution" ...
+```
+
+Interpretation:
+
+- Local skill registration issue is solved: `archive-context` is now visible in available skills for a new topic 7301 session.
+- A second issue remains: the Meridian provider/session path in topic 7301 forwards tool calls to a client instead of executing them in the OpenClaw agent runtime.
+- This affects at least Skill/read/bash-like tool execution in that session, even though direct `exec` had previously worked when explicitly requested.
+
+Read-only session comparison:
+
+```text
+topic 7301:
+  agent: main
+  sessionId: 7ed97a97-ef05-4752-b83c-303a2abd1138
+  modelProvider: meridian
+  model: claude-sonnet-4-6
+  skillsSnapshot includes archive-context: true
+
+topic 15222:
+  agent: main
+  modelProvider: openai-codex
+  model: gpt-5.5
+  providerOverride: openai-codex
+```
+
+Working hypothesis:
+
+- The remaining blocker is provider/runtime-specific: `meridian/claude-sonnet-4-6` topic session is going through a Meridian passthrough/client-forwarding execution mode.
+- `archive-context` should therefore remain script-first and executable by explicit OpenClaw `exec`; skill wrapper must be tested under the same provider/runtime where it will be used.
+
+Next atomic diagnostic options:
+
+1. Switch topic 7301 temporarily to `openai-codex/gpt-5.5` and retry `/archive-context 7301 --status`.
+2. Keep model as Meridian and inspect Meridian/MeridianA provider config for passthrough/client-forwarding mode.
+3. Avoid skill wrapper for now and standardize explicit exec fallback.
