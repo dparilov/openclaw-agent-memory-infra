@@ -249,3 +249,57 @@ Interpretation:
   1. a real OpenClaw-bundled/installed skill registration path, or
   2. a text-command/native-command route, or
   3. a documented explicit exec fallback.
+
+## Local Skill Registration Finding — 2026-04-27
+
+OpenClaw does discover workspace skills under:
+
+```text
+<workspace>/skills/*/SKILL.md
+<workspace>/.agents/skills/*/SKILL.md
+~/.openclaw/skills
+~/.agents/skills
+skills.load.extraDirs
+plugin skill dirs
+```
+
+But the local skill loader requires valid frontmatter with at least:
+
+```yaml
+---
+name: archive-context
+description: ...
+---
+```
+
+If `description` is missing, `loadSingleSkillDirectory()` returns null and the skill is silently absent from `openclaw skills list` and from session `skillsSnapshot`.
+
+Applied minimal local workspace fix to:
+
+```text
+/home/dima/.openclaw/workspace/skills/archive-context/SKILL.md
+```
+
+Added frontmatter:
+
+```yaml
+---
+name: archive-context
+description: Incrementally archive OpenClaw topic/session context into memory markdown using batch scripts.
+---
+```
+
+Verification:
+
+```text
+openclaw skills info archive-context
+→ archive-context ✓ Ready
+Source: openclaw-workspace
+
+openclaw skills check
+→ Total: 53
+→ Eligible: 10
+→ Ready includes archive-context
+```
+
+Important: existing sessions may still have old `skillsSnapshot` without `archive-context`. A new/reset session or skill snapshot refresh may be required before the topic 7301 agent sees it in `<available_skills>`.
