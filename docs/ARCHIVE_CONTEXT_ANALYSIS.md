@@ -349,3 +349,31 @@ Next atomic diagnostic options:
 1. Switch topic 7301 temporarily to `openai-codex/gpt-5.5` and retry `/archive-context 7301 --status`.
 2. Keep model as Meridian and inspect Meridian/MeridianA provider config for passthrough/client-forwarding mode.
 3. Avoid skill wrapper for now and standardize explicit exec fallback.
+
+## Codex Model Retest — 2026-04-27 01:01 MSK
+
+After switching topic 7301 to Codex (`gpt55`) and starting a new session, `/archive-context 7301 --status` was tested again.
+
+Observed reply:
+
+```text
+/archive-context 7301 --status read-only выполнен.
+
+Archive file: memory/2026-04-27.md
+Last archived: never
+Messages since last archive: 3
+
+Forwarding to client for execution не появлялось. Файлы не менял, архивирование не запускал.
+```
+
+Interpretation:
+
+- Under Codex/OpenAI provider path, the wrapper no longer hits `Forwarding to client for execution`.
+- This strongly supports the hypothesis that the forwarding issue is specific to the Meridian provider/session execution path, not Telegram topic routing, local skill discovery, or Python script permissions.
+- However, the current `/archive-context` skill content is outdated: it reports daily-memory style status (`memory/2026-04-27.md`, messages since last archive 3) rather than the new `archive-batch-v2.py` topic archive status (`0/71`, raw/deduped counts).
+
+Next needed fix:
+
+- Update `~/.openclaw/workspace/skills/archive-context/SKILL.md` to use `archive-batch-v2.py` for `--status` and batch reads.
+- The skill should be a thin wrapper over the script-first implementation in `/home/dima/projects/openclaw-agent-memory-infra/scripts/context_access/archive-batch-v2.py`.
+- Then retest `/archive-context 7301 --status` under Codex and require the v2 stats block.
