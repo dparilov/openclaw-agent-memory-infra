@@ -1,0 +1,4 @@
+{"role":"user","timestamp":1775984280000,"content":"Conversation info (untrusted metadata):\n```json\n{\n  \"chat_id\": \"telegram:-1003596522926\",\n  \"message_id\": \"7302\",\n  \"conversation_label\": \"Clearmind_projects id:-1003596522926 topic:7301\",\n  \"topic_id\": \"7301\"\n}\n```\n\nПривет","__openclaw":{"seq":"u1-duplicate"}}
+{"role":"assistant","timestamp":1775984460000,"content":"Fallback assistant fact","__openclaw":{"seq":"a2"}}
+{"role":"assistant","timestamp":1775984460001,"content":"Fallback assistant fact","__openclaw":{"seq":"a2-duplicate-same-minute"}}
+{"role":"user","timestamp":1775984520000,"content":"Conversation info (untrusted metadata):\n```json\n{\n  \"chat_id\": \"telegram:-1003596522926\",\n  \"message_id\": \"7306\",\n  \"conversation_label\": \"Clearmind_projects id:-1003596522926 topic:7301\",\n  \"topic_id\": \"7301\"\n}\n```\n\nТретье сообщение","__openclaw":{"seq":"u3"}}
