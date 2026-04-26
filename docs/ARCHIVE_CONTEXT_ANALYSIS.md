@@ -544,3 +544,45 @@ Interpretation:
 Risk:
 
 - Changing passthrough behavior may affect normal OpenClaw/Meridian tool routing and coding workflows. Test on one Meridian instance first, preferably the non-primary/experimental one.
+
+## MeridianA Env-Controlled Passthrough Patch — 2026-04-27
+
+With Dmitrii approval, patched only the MeridianA working tree:
+
+```text
+/home/dima/meridian-openclaw-arto
+```
+
+Changed source:
+
+```text
+src/proxy/adapters/openclaw.ts
+```
+
+New behavior:
+
+```ts
+usesPassthrough(): boolean {
+  const envVal = process.env.MERIDIAN_OPENCLAW_PASSTHROUGH
+  if (envVal === "0" || envVal === "false" || envVal === "no") {
+    return false
+  }
+  return true
+}
+```
+
+Also patched the currently used built dist bundle:
+
+```text
+dist/cli-39bfednj.js
+```
+
+Safety:
+
+- Default behavior remains unchanged (`passthrough=true`) unless `MERIDIAN_OPENCLAW_PASSTHROUGH=0|false|no` is set.
+- No MeridianA restart was performed in this step.
+- `node --check /home/dima/meridian-openclaw-arto/dist/cli-39bfednj.js` passed.
+
+Next step:
+
+- Restart only MeridianA (`port 3470`) with `MERIDIAN_OPENCLAW_PASSTHROUGH=0` and test `/archive-context 7301 --status` under a `meridiana/*` model.
