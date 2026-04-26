@@ -444,3 +444,54 @@ Conclusion:
 - On Codex/gpt55 execution path, `/archive-context 7301 --status` now works end-to-end as a read-only skill wrapper over `archive-batch-v2.py`.
 - Counts continue to change slightly as new topic messages arrive; this is expected.
 - Remaining known limitation: Meridian/MeridianA sessions can still hit `Forwarding to client for execution` and need separate provider/runtime diagnosis or explicit exec fallback.
+
+## Total and Batch Preview Retest — 2026-04-27 01:06 MSK
+
+Dmitrii retested read-only wrapper modes in topic 7301:
+
+```text
+/archive-context 7301 --total
+/archive-context 7301 --batch 0
+```
+
+Observed:
+
+```text
+ARCHIVE-CONTEXT PREVIEW
+
+Total
+
+topic:7301 raw_msgs:10497 deduped_msgs:7096 duplicates:3401 batch_size:100 total_batches:71
+
+Batch 0 preview
+
+============================================================
+ARCHIVE SOURCE STATS [topic:7301]
+ Session files : 16
+ Raw messages : 10497
+ Duplicates : 3401
+ Deduped msgs : 7096
+ Batch size : 100
+ Total batches : 71
+============================================================
+BATCH 0/70 [topic:7301]
+ Messages : 0–99 (100 total, deduped index)
+ From : 2026-04-12 08:58 UTC
+ To : 2026-04-12 10:50 UTC
+ Progress : 0/71 done before this batch
+============================================================
+
+[preview output continued through END BATCH 0/70 as produced by archive-batch-v2.py]
+
+Файлы не менялись. --mark-done не запускался.
+```
+
+Conclusion:
+
+- Read-only wrapper modes `--status`, `--total`, and `--batch 0` are working on Codex/gpt55 path.
+- No progress was marked and no memory file was written.
+- Read-only context access via `archive-context` can now be considered stable enough for the next design step: define a real archive writer contract.
+
+Operational note:
+
+- Context/archive tooling can run under Codex/OpenAI as an infra/control-plane model even if the main coding agent uses Opus/MeridianA. Prepared memory artifacts can then be consumed by other agents.
