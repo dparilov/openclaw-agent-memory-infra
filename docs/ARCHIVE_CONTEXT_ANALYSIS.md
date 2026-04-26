@@ -134,3 +134,39 @@ Acceptance check for topic 7301:
 This becomes part of Phase 1: Context Access Stabilization.
 
 The memory pipeline must use a stable context-access layer before candidate extraction/promotion is implemented.
+
+## Follow-up: `archive-batch-v2.py` Prototype
+
+Created a safe successor script in the infra repo:
+
+```text
+scripts/context_access/archive-batch-v2.py
+```
+
+The original workspace prototype was not modified.
+
+Initial dry-run on topic `7301`:
+
+```text
+Archive progress v2  [topic:7301]
+  Batches done  : 0/71  (0%)
+  Raw messages  : 10469
+  Deduped msgs   : 7077
+  Duplicates     : 3392
+  Next batch    : 0
+```
+
+Validation checks:
+
+- `python3 -m py_compile scripts/context_access/archive-batch-v2.py` passes.
+- `message_id:7302` appears once in batch 0, not three times.
+- empty assistant transcript records are skipped.
+- total batches dropped from 105 raw batches to 71 deduped batches.
+- status/total/batch dry-runs do not write archive memory or mark progress.
+
+Remaining before production use:
+
+- decide where portable progress files should live;
+- add tests with tiny fixture transcripts;
+- add a wrapper command/skill only after direct script behavior is stable;
+- avoid `--mark-done` until archive writing policy is implemented.
