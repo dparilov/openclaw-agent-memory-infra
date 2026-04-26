@@ -170,3 +170,49 @@ Remaining before production use:
 - add tests with tiny fixture transcripts;
 - add a wrapper command/skill only after direct script behavior is stable;
 - avoid `--mark-done` until archive writing policy is implemented.
+
+## Execution Path Check — 2026-04-27
+
+### Step 1: Current OpenClaw infra topic runtime
+
+Command:
+
+```bash
+python3 /home/dima/projects/openclaw-agent-memory-infra/scripts/context_access/archive-batch-v2.py 7301 --status
+```
+
+Result: success.
+
+```text
+Archive progress v2  [topic:7301]
+  Batches done  : 0/71  (0%)
+  Raw messages  : 10469
+  Deduped msgs   : 7077
+  Duplicates     : 3392
+  Next batch    : 0
+  Progress file : /home/dima/.openclaw/workspace/ops/archive-progress-7301-v2.json
+```
+
+### Step 2: Host shell
+
+User ran the same command manually on host shell. Result: success.
+
+### Step 3: Telemost topic 7301 agent via exec tool
+
+User requested the agent in topic 7301 to run the same command through exec tool. Result: success.
+
+```text
+Archive progress v2 [topic:7301]
+ Batches done : 0/71 (0%)
+ Raw messages : 10471
+ Deduped msgs : 7078
+ Duplicates : 3393
+ Next batch : 0
+ Progress file : /home/dima/.openclaw/workspace/ops/archive-progress-7301-v2.json
+```
+
+Interpretation:
+
+- Direct script execution works in the problematic Telemost agent session.
+- The remaining execution problem is likely in slash command / skill wrapper invocation, not in Python/path/permissions/tool availability.
+- Counts changed slightly because new messages arrived in topic 7301 between checks; this is expected for live transcript state.
