@@ -495,3 +495,52 @@ Conclusion:
 Operational note:
 
 - Context/archive tooling can run under Codex/OpenAI as an infra/control-plane model even if the main coding agent uses Opus/MeridianA. Prepared memory artifacts can then be consumed by other agents.
+
+## Meridian/MeridianA Forwarding Root Cause — 2026-04-27
+
+Read-only source/process inspection found:
+
+- Both running Meridian processes use `MERIDIAN_DEFAULT_AGENT=openclaw`.
+- `meridian-assistant` source adapter `src/proxy/adapters/openclaw.ts` contains:
+
+```ts
+usesPassthrough(): boolean {
+  return true
+}
+```
+
+- In `src/proxy/server.ts`, when `passthrough` is true, Meridian installs a `PreToolUse` hook matching all tools and returns:
+
+```ts
+return {
+  decision: "block" as const,
+  reason: "Forwarding to client for execution",
+}
+```
+
+Running processes observed:
+
+```text
+PID 3038807: /home/dima/meridian-openclaw-arto/dist/cli.js
+  MERIDIAN_PORT=3470
+  MERIDIAN_DEFAULT_AGENT=openclaw
+  MERIDIAN_BETA_POLICY=strip-all
+
+PID 3038834: /home/dima/meridian-openclaw/dist/cli.js
+  MERIDIAN_PORT=3469
+  MERIDIAN_DEFAULT_AGENT=openclaw
+  MERIDIAN_IDLE_TIMEOUT_SECONDS=3600
+```
+
+Interpretation:
+
+- `Forwarding to client for execution` is the expected behavior of the hardcoded OpenClaw adapter passthrough mode.
+- The next fix should be a controlled Meridian experiment, not another OpenClaw skill/config tweak.
+- Candidate approaches:
+  1. Patch `openclawAdapter.usesPassthrough()` to be env-controlled instead of hardcoded `true`.
+  2. Run one Meridian instance with `openclaw` adapter internal/direct tool execution and test `/archive-context` there.
+  3. Keep passthrough for coding workflows if needed and use Codex/OpenAI as control-plane fallback for context/archive tooling.
+
+Risk:
+
+- Changing passthrough behavior may affect normal OpenClaw/Meridian tool routing and coding workflows. Test on one Meridian instance first, preferably the non-primary/experimental one.
