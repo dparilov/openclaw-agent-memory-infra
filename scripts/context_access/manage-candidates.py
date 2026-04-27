@@ -44,6 +44,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from io_utils import atomic_write_text, locked_path, write_text_in_lock
+
 # ---------------------------------------------------------------------------
 # PyYAML is a hard requirement — no fallback (Fix A2)
 # ---------------------------------------------------------------------------
@@ -158,9 +160,10 @@ def load_candidates(path: Path) -> list[dict]:
 
 
 def save_candidates(path: Path, candidates: list[dict]) -> None:
-    path.write_text(
+    """Write candidates. Caller MUST hold locked_path(path)."""
+    write_text_in_lock(
+        path,
         yaml.dump(candidates, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
     )
 
 
@@ -467,21 +470,22 @@ def load_and_migrate(path: Path) -> list[dict]:
 def cmd_migrate_legacy(topic_id: str, memory_dir: Path, dry_run: bool = False) -> None:
     """Fix 4 — persist v0→v1 migration to disk."""
     cf = candidates_file(memory_dir, topic_id)
-    original = load_candidates(cf)
-    v0_count = sum(1 for c in original if c.get("schema_version") != 1)
-    if v0_count == 0:
-        print(f"All {len(original)} candidates are already schema v1. Nothing to migrate.")
-        return
-    migrated = [migrate_legacy(c) for c in original]
-    print(f"Migrating {v0_count}/{len(original)} legacy candidates to schema v1:")
-    for orig, mig in zip(original, migrated):
-        if orig.get("schema_version") != 1:
-            print(f"  {mig['id']}  [{mig.get('type','?')}]  {str(mig.get('claim',''))[:60]}")
-    if dry_run:
-        print("\n[dry-run] No changes written.")
-        return
-    save_candidates(cf, migrated)
-    print(f"\nPersisted migration → {cf}")
+    with locked_path(cf):
+        original = load_candidates(cf)
+        v0_count = sum(1 for c in original if c.get("schema_version") != 1)
+        if v0_count == 0:
+            print(f"All {len(original)} candidates are already schema v1. Nothing to migrate.")
+            return
+        migrated = [migrate_legacy(c) for c in original]
+        print(f"Migrating {v0_count}/{len(original)} legacy candidates to schema v1:")
+        for orig, mig in zip(original, migrated):
+            if orig.get("schema_version") != 1:
+                print(f"  {mig['id']}  [{mig.get('type','?')}]  {str(mig.get('claim',''))[:60]}")
+        if dry_run:
+            print("\n[dry-run] No changes written.")
+            return
+        save_candidates(cf, migrated)
+        print(f"\nPersisted migration → {cf}")
 
 
 # ---------------------------------------------------------------------------
@@ -516,29 +520,30 @@ def cmd_add(
 
     evidence = [make_evidence_entry(source_kind, source_ref, locator, topic_id)]
     cf = candidates_file(memory_dir, topic_id)
-    existing = load_and_migrate(cf)
+    with locked_path(cf):
+        existing = load_and_migrate(cf)
 
-    added = 0
-    for fact in facts:
-        cand = build_candidate_v1(
-            claim=fact,
-            topic_id=topic_id,
-            created_by=session_id,
-            evidence=evidence,
-            confidence=confidence,
-            risk=risk,
-            project=project,
-            summary=summary,
-            suggested_target=suggested_target,
-        )
-        existing.append(cand)
-        added += 1
-        gate_ok, gate_reason = can_auto_promote(cand)
-        gate_label = "AUTO" if gate_ok else f"REVIEW ({gate_reason})"
-        print(f"  {cand['id']}  [{cand['type']}]  [{gate_label}]  {fact[:72]}")
+        added = 0
+        for fact in facts:
+            cand = build_candidate_v1(
+                claim=fact,
+                topic_id=topic_id,
+                created_by=session_id,
+                evidence=evidence,
+                confidence=confidence,
+                risk=risk,
+                project=project,
+                summary=summary,
+                suggested_target=suggested_target,
+            )
+            existing.append(cand)
+            added += 1
+            gate_ok, gate_reason = can_auto_promote(cand)
+            gate_label = "AUTO" if gate_ok else f"REVIEW ({gate_reason})"
+            print(f"  {cand['id']}  [{cand['type']}]  [{gate_label}]  {fact[:72]}")
 
-    save_candidates(cf, existing)
-    print(f"\nAdded {added} candidates → {cf}")
+        save_candidates(cf, existing)
+        print(f"\nAdded {added} candidates → {cf}")
 
 
 def cmd_list(topic_id: str, memory_dir: Path) -> None:
@@ -581,59 +586,60 @@ def cmd_status(topic_id: str, memory_dir: Path) -> None:
 def cmd_promote_auto(topic_id: str, memory_dir: Path, agents_base: Path, dry_run: bool = False) -> None:
     """Auto-promote candidates that pass all gates → write to L2 memory."""
     cf = candidates_file(memory_dir, topic_id)
-    candidates = load_and_migrate(cf)
+    with locked_path(cf):
+        candidates = load_and_migrate(cf)
 
-    promotable = []
-    blocked = []
-    for c in candidates:
-        ok, reason = can_auto_promote(c)
-        if ok:
-            promotable.append(c)
-        elif c.get("status") == "candidate":
-            blocked.append((c, reason))
+        promotable = []
+        blocked = []
+        for c in candidates:
+            ok, reason = can_auto_promote(c)
+            if ok:
+                promotable.append(c)
+            elif c.get("status") == "candidate":
+                blocked.append((c, reason))
 
-    if blocked:
-        print(f"BLOCKED ({len(blocked)} candidates):")
-        for c, reason in blocked:
-            print(f"  {c['id']}  [{c.get('type','?')}]  {reason}")
+        if blocked:
+            print(f"BLOCKED ({len(blocked)} candidates):")
+            for c, reason in blocked:
+                print(f"  {c['id']}  [{c.get('type','?')}]  {reason}")
 
-    if not promotable:
-        print(f"\nNothing to auto-promote.")
-        return
+        if not promotable:
+            print(f"\nNothing to auto-promote.")
+            return
 
-    print(f"\nAUTO-PROMOTE ({len(promotable)} candidates):")
-    for c in promotable:
-        print(f"  {c['id']}  [{c.get('type','?')}]  {str(c.get('claim',''))[:72]}")
+        print(f"\nAUTO-PROMOTE ({len(promotable)} candidates):")
+        for c in promotable:
+            print(f"  {c['id']}  [{c.get('type','?')}]  {str(c.get('claim',''))[:72]}")
 
-    if dry_run:
-        print("\n[dry-run] No changes written.")
-        return
+        if dry_run:
+            print("\n[dry-run] No changes written.")
+            return
 
-    ab = _import_archive_batch()
-    session_id = f"promote-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
-    facts = [str(c["claim"]) for c in promotable]
-    memory_file = memory_dir / f"topic-{topic_id}.md"
+        ab = _import_archive_batch()
+        session_id = f"promote-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+        facts = [str(c["claim"]) for c in promotable]
+        memory_file = memory_dir / f"topic-{topic_id}.md"
 
-    existing_content = memory_file.read_text(encoding="utf-8") if memory_file.exists() else ""
-    existing_bullets = ab.extract_existing_bullets(existing_content)
-    written = ab.write_batch_to_memory(
-        memory_file=memory_file,
-        topic_id=topic_id,
-        batch_n=-1,
-        session_id=session_id,
-        facts=facts,
-        existing_bullets=existing_bullets,
-    )
+        existing_content = memory_file.read_text(encoding="utf-8") if memory_file.exists() else ""
+        existing_bullets = ab.extract_existing_bullets(existing_content)
+        written = ab.write_batch_to_memory(
+            memory_file=memory_file,
+            topic_id=topic_id,
+            batch_n=-1,
+            session_id=session_id,
+            facts=facts,
+            existing_bullets=existing_bullets,
+        )
 
-    promoted_ids = {c["id"] for c in promotable}
-    for c in candidates:
-        if c["id"] in promoted_ids:
-            c["status"] = "auto-promoted"
-            c["promoted_at"] = now_iso()
-            c["promoted_by"] = session_id
+        promoted_ids = {c["id"] for c in promotable}
+        for c in candidates:
+            if c["id"] in promoted_ids:
+                c["status"] = "auto-promoted"
+                c["promoted_at"] = now_iso()
+                c["promoted_by"] = session_id
 
-    save_candidates(cf, candidates)
-    print(f"\nAuto-promoted {len(promotable)} → {written} facts written to {memory_file}")
+        save_candidates(cf, candidates)
+        print(f"\nAuto-promoted {len(promotable)} → {written} facts written to {memory_file}")
 
 
 def cmd_approve(
@@ -645,55 +651,56 @@ def cmd_approve(
 ) -> None:
     """Manually approve a candidate → write to L2."""
     cf = candidates_file(memory_dir, topic_id)
-    candidates = load_and_migrate(cf)
+    with locked_path(cf):
+        candidates = load_and_migrate(cf)
 
-    target = next((c for c in candidates if c.get("id") == cand_id), None)
-    if not target:
-        print(f"ERROR: candidate {cand_id} not found", file=sys.stderr)
-        sys.exit(1)
+        target = next((c for c in candidates if c.get("id") == cand_id), None)
+        if not target:
+            print(f"ERROR: candidate {cand_id} not found", file=sys.stderr)
+            sys.exit(1)
 
-    # Non-blocking fix: prevent --approve on already-terminal candidates
-    if target.get("status") in TERMINAL_STATUS:
-        print(
-            f"ERROR: candidate {cand_id} is already in terminal state "
-            f"'{target['status']}' and cannot be approved again.",
-            file=sys.stderr,
+        # Non-blocking fix: prevent --approve on already-terminal candidates
+        if target.get("status") in TERMINAL_STATUS:
+            print(
+                f"ERROR: candidate {cand_id} is already in terminal state "
+                f"'{target['status']}' and cannot be approved again.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        errors = validate_candidate_v1(target)
+        if errors:
+            print(f"ERROR: candidate fails schema validation:", file=sys.stderr)
+            for e in errors:
+                print(f"  - {e}", file=sys.stderr)
+            sys.exit(1)
+
+        ab = _import_archive_batch()
+        session_id = f"approve-{cand_id}"
+        memory_file = memory_dir / f"topic-{topic_id}.md"
+        existing_content = memory_file.read_text(encoding="utf-8") if memory_file.exists() else ""
+        existing_bullets = ab.extract_existing_bullets(existing_content)
+        ab.write_batch_to_memory(
+            memory_file=memory_file,
+            topic_id=topic_id,
+            batch_n=-1,
+            session_id=session_id,
+            facts=[str(target["claim"])],
+            existing_bullets=existing_bullets,
         )
-        sys.exit(1)
+        # TODO (PR 6): pass candidate_id and evidence metadata into write_batch_to_memory
+        # so the L0 audit entry records provenance traceable back to this candidate.
 
-    errors = validate_candidate_v1(target)
-    if errors:
-        print(f"ERROR: candidate fails schema validation:", file=sys.stderr)
-        for e in errors:
-            print(f"  - {e}", file=sys.stderr)
-        sys.exit(1)
-
-    ab = _import_archive_batch()
-    session_id = f"approve-{cand_id}"
-    memory_file = memory_dir / f"topic-{topic_id}.md"
-    existing_content = memory_file.read_text(encoding="utf-8") if memory_file.exists() else ""
-    existing_bullets = ab.extract_existing_bullets(existing_content)
-    ab.write_batch_to_memory(
-        memory_file=memory_file,
-        topic_id=topic_id,
-        batch_n=-1,
-        session_id=session_id,
-        facts=[str(target["claim"])],
-        existing_bullets=existing_bullets,
-    )
-    # TODO (PR 6): pass candidate_id and evidence metadata into write_batch_to_memory
-    # so the L0 audit entry records provenance traceable back to this candidate.
-
-    target["status"] = "approved"
-    target["approved_at"] = now_iso()
-    if reviewer:
-        target["approved_by"] = reviewer
-    target.setdefault("human_review", {})
-    target["human_review"]["decision"] = "approved"
-    target["human_review"]["reviewer"] = reviewer
-    target["human_review"]["reviewed_at"] = now_iso()
-    save_candidates(cf, candidates)
-    print(f"Approved {cand_id} → written to {memory_file}")
+        target["status"] = "approved"
+        target["approved_at"] = now_iso()
+        if reviewer:
+            target["approved_by"] = reviewer
+        target.setdefault("human_review", {})
+        target["human_review"]["decision"] = "approved"
+        target["human_review"]["reviewer"] = reviewer
+        target["human_review"]["reviewed_at"] = now_iso()
+        save_candidates(cf, candidates)
+        print(f"Approved {cand_id} → written to {memory_file}")
 
 
 def cmd_reject(
@@ -704,23 +711,24 @@ def cmd_reject(
     reviewer: str | None = None,
 ) -> None:
     cf = candidates_file(memory_dir, topic_id)
-    candidates = load_and_migrate(cf)
-    target = next((c for c in candidates if c.get("id") == cand_id), None)
-    if not target:
-        print(f"ERROR: candidate {cand_id} not found", file=sys.stderr)
-        sys.exit(1)
-    target["status"] = "rejected"
-    target["rejected_at"] = now_iso()
-    if reason:
-        target["rejected_reason"] = reason
-    if reviewer:
-        target["rejected_by"] = reviewer
-    target.setdefault("human_review", {})
-    target["human_review"]["decision"] = "rejected"
-    target["human_review"]["reviewer"] = reviewer
-    target["human_review"]["reviewed_at"] = now_iso()
-    target["human_review"]["notes"] = reason
-    save_candidates(cf, candidates)
+    with locked_path(cf):
+        candidates = load_and_migrate(cf)
+        target = next((c for c in candidates if c.get("id") == cand_id), None)
+        if not target:
+            print(f"ERROR: candidate {cand_id} not found", file=sys.stderr)
+            sys.exit(1)
+        target["status"] = "rejected"
+        target["rejected_at"] = now_iso()
+        if reason:
+            target["rejected_reason"] = reason
+        if reviewer:
+            target["rejected_by"] = reviewer
+        target.setdefault("human_review", {})
+        target["human_review"]["decision"] = "rejected"
+        target["human_review"]["reviewer"] = reviewer
+        target["human_review"]["reviewed_at"] = now_iso()
+        target["human_review"]["notes"] = reason
+        save_candidates(cf, candidates)
     print(f"Rejected {cand_id}: {str(target.get('claim',''))[:80]}")
 
 
