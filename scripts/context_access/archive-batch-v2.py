@@ -578,6 +578,11 @@ def main() -> int:
         "--compact", action="store_true",
         help="Print memory file formatted for LLM compaction (read-only, no writes).",
     )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="With --write: show what would be written (memory file, session_id, "
+             "fact_count, conflicts) without mutating any file. Safe to run repeatedly.",
+    )
     parser.add_argument("--agents-base", type=Path, default=DEFAULT_AGENTS_BASE)
     parser.add_argument("--progress-dir", type=Path, default=DEFAULT_PROGRESS_DIR)
     args = parser.parse_args()
@@ -627,6 +632,22 @@ def main() -> int:
         # Read existing memory file for conflict detection.
         existing_content = memory_file.read_text(encoding="utf-8") if memory_file.exists() else ""
         existing_bullets = extract_existing_bullets(existing_content)
+
+        if args.dry_run:
+            conflicts = detect_conflicts(facts, existing_bullets)
+            non_empty = sum(1 for f in facts if f.strip())
+            print(f"[dry-run] --write would write to : {memory_file}")
+            print(f"[dry-run]   session_id : {session_id}")
+            print(f"[dry-run]   batch_n    : {batch_n}")
+            print(f"[dry-run]   facts      : {non_empty}")
+            print(f"[dry-run]   conflicts  : {len(conflicts)}")
+            for idx, (new_fact, existing_line, conflict_batch) in conflicts.items():
+                trimmed = new_fact[:60] + ("..." if len(new_fact) > 60 else "")
+                print(f"[dry-run]   conflict[{idx}]: '{trimmed}' vs batch {conflict_batch}")
+            print("[dry-run] L0 audit log : NOT written")
+            print("[dry-run] Progress file: NOT updated")
+            print("[dry-run] No files written.")
+            return 0
 
         written = write_batch_to_memory(
             memory_file=memory_file,

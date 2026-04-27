@@ -113,7 +113,7 @@ def topic_name_from_file(path: Path) -> str:
 # Wiki page builders
 # ---------------------------------------------------------------------------
 
-def build_topic_page(topic_id: str, memory_file: Path, wiki_dir: Path) -> dict:
+def build_topic_page(topic_id: str, memory_file: Path, wiki_dir: Path, dry_run: bool = False) -> dict:
     """Build wiki/topic-<id>.md from memory file. Returns stats."""
     content = memory_file.read_text(encoding="utf-8", errors="replace")
     header = parse_memory_header(content)
@@ -158,7 +158,8 @@ def build_topic_page(topic_id: str, memory_file: Path, wiki_dir: Path) -> dict:
             lines.append("")
 
     wiki_file = wiki_dir / f"topic-{topic_id}.md"
-    wiki_file.write_text("\n".join(lines), encoding="utf-8")
+    if not dry_run:
+        wiki_file.write_text("\n".join(lines), encoding="utf-8")
 
     return {
         "topic_id": topic_id,
@@ -170,10 +171,11 @@ def build_topic_page(topic_id: str, memory_file: Path, wiki_dir: Path) -> dict:
     }
 
 
-def build_by_type_pages(all_facts_by_type: dict[str, list[dict]], wiki_dir: Path) -> None:
+def build_by_type_pages(all_facts_by_type: dict[str, list[dict]], wiki_dir: Path, dry_run: bool = False) -> None:
     """Build wiki/by-type/<type>.md pages aggregating facts across all topics."""
     type_dir = wiki_dir / "by-type"
-    type_dir.mkdir(exist_ok=True)
+    if not dry_run:
+        type_dir.mkdir(exist_ok=True)
 
     section_titles = {
         "decisions": "Architecture Decisions",
@@ -206,10 +208,11 @@ def build_by_type_pages(all_facts_by_type: dict[str, list[dict]], wiki_dir: Path
                 lines.append(f)
             lines.append("")
 
-        (type_dir / f"{fact_type}.md").write_text("\n".join(lines), encoding="utf-8")
+        if not dry_run:
+            (type_dir / f"{fact_type}.md").write_text("\n".join(lines), encoding="utf-8")
 
 
-def build_index(topic_stats: list[dict], wiki_dir: Path) -> None:
+def build_index(topic_stats: list[dict], wiki_dir: Path, dry_run: bool = False) -> None:
     """Build wiki/index.md — master index."""
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     total_facts = sum(s["fact_count"] for s in topic_stats)
@@ -243,7 +246,8 @@ def build_index(topic_stats: list[dict], wiki_dir: Path) -> None:
             lines.append(f"- [{tf.stem.replace('-', ' ').title()}](by-type/{tf.name})")
     lines.append("")
 
-    (wiki_dir / "index.md").write_text("\n".join(lines), encoding="utf-8")
+    if not dry_run:
+        (wiki_dir / "index.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +264,9 @@ def main() -> int:
                         help="Build wiki for single topic only (numeric ID or name)")
     parser.add_argument("--clean", action="store_true",
                         help="Remove wiki/ directory before rebuilding")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Show what would be built without writing any files. "
+                             "Prints per-topic fact counts and file paths. Safe to run repeatedly.")
     parser.add_argument("--agents-base", type=Path, default=DEFAULT_AGENTS_BASE)
     args = parser.parse_args()
 
@@ -270,11 +277,15 @@ def main() -> int:
     wiki_dir = memory_dir / "wiki"
 
     if args.clean and wiki_dir.exists():
-        import shutil
-        shutil.rmtree(wiki_dir)
-        print(f"Cleaned {wiki_dir}")
+        if args.dry_run:
+            print(f"[dry-run] --clean would remove: {wiki_dir}")
+        else:
+            import shutil
+            shutil.rmtree(wiki_dir)
+            print(f"Cleaned {wiki_dir}")
 
-    wiki_dir.mkdir(parents=True, exist_ok=True)
+    if not args.dry_run:
+        wiki_dir.mkdir(parents=True, exist_ok=True)
 
     # Find memory files
     if args.topic:
@@ -309,7 +320,7 @@ def main() -> int:
         tid = m.group(1)
 
         try:
-            stats = build_topic_page(tid, mf, wiki_dir)
+            stats = build_topic_page(tid, mf, wiki_dir, dry_run=args.dry_run)
             topic_stats.append(stats)
 
             # Collect for by-type pages
@@ -322,18 +333,31 @@ def main() -> int:
                     "text": f["text"],
                 })
 
-            print(f"  topic-{tid}: {stats['fact_count']} facts → {stats['wiki_file']}")
+            prefix = "[dry-run] " if args.dry_run else ""
+            print(f"  {prefix}topic-{tid}: {stats['fact_count']} facts → {stats['wiki_file']}")
         except Exception as e:
             print(f"  ERROR topic-{tid}: {e}", file=sys.stderr)
 
-    build_by_type_pages(all_facts_by_type, wiki_dir)
-    build_index(topic_stats, wiki_dir)
+    build_by_type_pages(all_facts_by_type, wiki_dir, dry_run=args.dry_run)
+    build_index(topic_stats, wiki_dir, dry_run=args.dry_run)
+
+    total_facts = sum(s["fact_count"] for s in topic_stats)
+
+    if args.dry_run:
+        print(f"\n[dry-run] Would build wiki:")
+        print(f"[dry-run]   Topics:      {len(topic_stats)}")
+        print(f"[dry-run]   Total facts: {total_facts}")
+        print(f"[dry-run]   Index:       {wiki_dir / 'index.md'}")
+        print(f"[dry-run]   By-type:     {wiki_dir / 'by-type/'}")
+        print(f"[dry-run]   WIKI_META:   {wiki_dir / 'WIKI_META.json'}")
+        print("[dry-run] No files written.")
+        return 0
 
     # Write WIKI_META.json
     meta = {
         "built_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "topic_count": len(topic_stats),
-        "total_facts": sum(s["fact_count"] for s in topic_stats),
+        "total_facts": total_facts,
         "topics": topic_stats,
     }
     (wiki_dir / "WIKI_META.json").write_text(
@@ -342,7 +366,7 @@ def main() -> int:
 
     print(f"\nWiki built:")
     print(f"  Topics:      {len(topic_stats)}")
-    print(f"  Total facts: {sum(s['fact_count'] for s in topic_stats)}")
+    print(f"  Total facts: {total_facts}")
     print(f"  Index:       {wiki_dir / 'index.md'}")
     print(f"  By-type:     {wiki_dir / 'by-type/'}")
 
