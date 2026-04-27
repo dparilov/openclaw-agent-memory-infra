@@ -47,7 +47,7 @@ python3 /path/to/read-topic.py <topic-id> --limit 200
 - NEVER write to memory files directly — only via `archive-batch-v2.py --write`
 - NEVER silently accept a contradiction between memory and observed reality —
   archive the correction and flag the conflict
-- IF `last-write` in memory header > 7 days ago → run `/recover-memory` before any task work
+- IF `last-write` in memory header > 24 hours ago → run `/recover-memory` before any task work
 - IF `/recover-memory` fails → report to user; do not proceed as if memory is current
 
 ---
