@@ -25,8 +25,10 @@ id: CAND-20260427-0001          # Unique ID: CAND-YYYYMMDD-NNNN or CAND-<uuid8>
 schema_version: 1               # Must be 1
 created_at: "2026-04-27T20:00:00+03:00"
 created_by: "infra-agent"       # agent name, session ID, or "human"
-project: "openclaw-agent-memory-infra"
 topic_id: "7301"
+
+# Optional metadata
+project: "openclaw-agent-memory-infra"  # Optional — omit if single-project setup
 
 type: "architecture_decision"   # See type list below
 claim: "The project uses L0-L4 memory layers."
@@ -46,17 +48,19 @@ evidence:
 
 confidence: "medium"            # low | medium | high
 risk: "medium"                  # low | medium | high
+                                # NOTE: only risk=low qualifies for auto-promotion
 
 classification:
   auto_promotable: false
   needs_human_approval: true
   reason: "Architecture decision type always requires human approval."
 
+# Optional fields
 suggested_targets:
   - ".agent/memory/working/active-decisions.md"
   - "docs/adr/ADR-memory-layers.md"
 
-related:
+related:                        # Optional
   tasks: []
   prs: []
   decisions: []
@@ -111,6 +115,8 @@ human_review:
 
 ### Evidence kinds
 
+The `kind` field must be one of the following (enforced by `VALID_EVIDENCE_KINDS` in `manage-candidates.py` and argparse `choices`):
+
 | Kind | Description |
 |------|-------------|
 | `session_history` | OpenClaw JSONL session transcript |
@@ -120,6 +126,9 @@ human_review:
 | `pyrogram` | Live Telegram message read via Pyrogram |
 | `memory_md` | Existing `.agent/memory/topic-*.md` entry |
 | `manual` | Human-entered fact |
+| `candidate` | Derived from another candidate |
+
+**All three fields `kind`, `ref`, and `locator` must be non-empty strings.** `observed_at` is also required. Validation is enforced by `validate_evidence_entry()` and `make_evidence_entry()`.
 
 ---
 
@@ -151,17 +160,18 @@ Also possible:
 
 ## Auto-Promotion Gate
 
-A candidate is auto-promotable **only if all** of the following are true:
+A candidate is auto-promotable **only if ALL** of the following are true:
 
 | Condition | Requirement |
 |-----------|-------------|
 | `status` | `"candidate"` |
-| `risk` | `"low"` |
+| `risk` | `"low"` — **medium and high are NOT auto-promotable** |
 | `confidence` | `"medium"` or `"high"` |
-| `evidence` | Non-empty list |
+| `evidence` | Non-empty list with valid entries (kind, ref, locator all non-empty) |
 | `type` | In auto-promotable type list |
 | `claim` | No high-risk keywords (see below) |
 | `classification.auto_promotable` | `true` |
+| Schema | `schema_version == 1` and all required fields valid |
 
 ### High-risk keywords (claim text scan)
 
@@ -193,9 +203,38 @@ human approval
 
 ## Migration Note
 
-Candidates created before schema v1 (without `schema_version`, `evidence`, `confidence`, `risk`, `classification`) are treated as `schema_version: 0` (legacy). They cannot be auto-promoted and require manual review before approval.
+Candidates created before schema v1 (without `schema_version`, `evidence`, `confidence`, `risk`, `classification`) are treated as `schema_version: 0` (legacy).
 
-Legacy candidates should be migrated by adding evidence manually or re-extracted from session history.
+### Runtime compatibility
+
+`load_and_migrate()` applies `migrate_legacy()` at read-time as an **in-memory shim** — changes are NOT written to disk. This allows the tool to operate on legacy files without requiring a prior migration step.
+
+### Persisting migration
+
+Use `--migrate-legacy` to write v1-upgraded candidates to disk:
+
+```bash
+# Preview
+python3 manage-candidates.py 7301 --migrate-legacy --dry-run
+
+# Apply
+python3 manage-candidates.py 7301 --migrate-legacy
+```
+
+### Migration defaults
+
+| Field | Migrated default |
+|-------|------------------|
+| `schema_version` | `1` |
+| `confidence` | `"medium"` |
+| `risk` | `"medium"` |
+| `evidence[0].kind` | `"manual"` |
+| `evidence[0].ref` | `"legacy-migration"` |
+| `evidence[0].locator` | `"migrated-v0"` *(non-empty, passes deep validation)* |
+| `classification.auto_promotable` | `false` |
+| `status` | `"needs-approval"` *(all non-terminal)* |
+
+Migrated candidates are never auto-promoted. Human review is required before any L2 write.
 
 ---
 

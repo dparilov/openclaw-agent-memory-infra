@@ -91,6 +91,19 @@ VALID_STATUS = {
     "candidate", "auto-promoted", "needs-approval",
     "approved", "rejected", "duplicate", "obsolete",
 }
+TERMINAL_STATUS = {"auto-promoted", "approved", "rejected", "duplicate", "obsolete"}
+
+# Fix 3 — canonical set used by argparse choices AND schema validation
+VALID_EVIDENCE_KINDS = {
+    "session_history",
+    "repo_doc",
+    "pr",
+    "review",
+    "pyrogram",
+    "memory_md",
+    "manual",
+    "candidate",
+}
 
 # ---------------------------------------------------------------------------
 # High-risk keyword scan — blocks auto-promotion regardless of type (Fix A1)
@@ -161,15 +174,40 @@ def make_evidence_entry(
     locator: str,
     topic_id: str | None = None,
 ) -> dict:
+    if kind not in VALID_EVIDENCE_KINDS:
+        raise ValueError(f"Unknown evidence kind {kind!r}. Valid: {sorted(VALID_EVIDENCE_KINDS)}")
+    if not ref or not ref.strip():
+        raise ValueError("evidence ref must be a non-empty string (e.g. 'batch 12' or file path)")
+    if not locator or not locator.strip():
+        raise ValueError("evidence locator must be a non-empty string (e.g. 'batch:12:msg:47' or 'line:10')")
     entry: dict = {
         "kind": kind,
-        "ref": ref,
-        "locator": locator,
+        "ref": ref.strip(),
+        "locator": locator.strip(),
         "observed_at": now_iso(),
     }
     if topic_id:
         entry["topic_id"] = topic_id
     return entry
+
+
+def validate_evidence_entry(ev: dict) -> list[str]:
+    """Return list of errors for a single evidence entry."""
+    errs: list[str] = []
+    if not isinstance(ev, dict):
+        return ["evidence entry must be a dict"]
+    kind = ev.get("kind", "")
+    if not kind:
+        errs.append("evidence.kind is required")
+    elif kind not in VALID_EVIDENCE_KINDS:
+        errs.append(f"evidence.kind {kind!r} is not a valid kind; must be one of {sorted(VALID_EVIDENCE_KINDS)}")
+    if not ev.get("ref", "").strip():
+        errs.append("evidence.ref must be non-empty (human-readable source reference)")
+    if not ev.get("locator", "").strip():
+        errs.append("evidence.locator must be non-empty (machine-usable position reference)")
+    if not ev.get("observed_at", ""):
+        errs.append("evidence.observed_at is required")
+    return errs
 
 
 def classify_type(fact: str) -> str:
@@ -189,7 +227,12 @@ def classify_type(fact: str) -> str:
 
 
 def derive_classification(fact_type: str, confidence: str, risk: str, claim: str) -> dict:
-    """Compute classification block from field values."""
+    """Compute classification block from field values.
+
+    Auto-promotion requires ALL of: type in AUTO_PROMOTE_TYPES, risk=low,
+    confidence in {medium, high}, no high-risk keyword in claim.
+    risk=medium is NOT auto-promotable (per docs/CANDIDATE_SCHEMA.md).
+    """
     kw = contains_high_risk_keyword(claim)
     if fact_type in HIGH_RISK_TYPES:
         return {
@@ -197,11 +240,12 @@ def derive_classification(fact_type: str, confidence: str, risk: str, claim: str
             "needs_human_approval": True,
             "reason": f"Type '{fact_type}' always requires human approval.",
         }
-    if risk == "high":
+    # Fix 1: only risk=low is auto-promotable; medium and high both require review
+    if risk != "low":
         return {
             "auto_promotable": False,
             "needs_human_approval": True,
-            "reason": "Risk level is high.",
+            "reason": f"Risk is '{risk}'; only risk=low qualifies for auto-promotion.",
         }
     if confidence == "low":
         return {
@@ -276,7 +320,11 @@ def build_candidate_v1(
 # ---------------------------------------------------------------------------
 
 def validate_candidate_v1(c: dict) -> list[str]:
-    """Return list of validation errors; empty list means valid."""
+    """Return list of validation errors; empty list means valid.
+
+    Validates schema_version, required fields, enum values, and deep
+    evidence entry structure (Fix 2).
+    """
     errors: list[str] = []
     if c.get("schema_version") != 1:
         errors.append("schema_version must be 1")
@@ -292,8 +340,16 @@ def validate_candidate_v1(c: dict) -> list[str]:
         errors.append(f"risk must be one of {VALID_RISK}")
     if c.get("status") and c["status"] not in VALID_STATUS:
         errors.append(f"status must be one of {VALID_STATUS}")
-    if isinstance(c.get("evidence"), list) and len(c["evidence"]) == 0:
-        errors.append("evidence list must be non-empty")
+    # Fix 2 — deep evidence validation
+    evidence = c.get("evidence")
+    if isinstance(evidence, list):
+        if len(evidence) == 0:
+            errors.append("evidence list must be non-empty")
+        else:
+            for i, ev in enumerate(evidence):
+                ev_errs = validate_evidence_entry(ev)
+                for e in ev_errs:
+                    errors.append(f"evidence[{i}]: {e}")
     return errors
 
 
@@ -305,6 +361,16 @@ def can_auto_promote(c: dict) -> tuple[bool, str]:
     """
     Return (True, "") if the candidate passes all promotion gates.
     Return (False, reason) otherwise.
+
+    Gates (all must pass):
+      1. status == "candidate"
+      2. schema v1 valid (including deep evidence check)
+      3. type in AUTO_PROMOTE_TYPES
+      4. risk == "low"  (medium is NOT auto-promotable — Fix 1)
+      5. confidence != "low"
+      6. evidence non-empty with valid entries
+      7. no high-risk keyword in claim
+      8. classification.auto_promotable == True
     """
     if c.get("status") != "candidate":
         return False, f"status is '{c.get('status')}', expected 'candidate'"
@@ -316,8 +382,9 @@ def can_auto_promote(c: dict) -> tuple[bool, str]:
     if c["type"] not in AUTO_PROMOTE_TYPES:
         return False, f"type '{c['type']}' is never auto-promotable"
 
-    if c["risk"] == "high":
-        return False, "risk is high"
+    # Fix 1: only risk=low qualifies; reject medium and high explicitly
+    if c["risk"] != "low":
+        return False, f"risk is '{c['risk']}'; only risk=low qualifies for auto-promotion"
 
     if c["confidence"] == "low":
         return False, "confidence is low"
@@ -341,17 +408,37 @@ def can_auto_promote(c: dict) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 def migrate_legacy(c: dict) -> dict:
-    """Upgrade a schema_version 0 (or missing) candidate to v1 in-place."""
+    """Upgrade a schema_version 0 (or missing) candidate to v1 in-place.
+
+    Fix 4 — behavior is explicitly IN-MEMORY ONLY. This function does NOT
+    write anything to disk. Use cmd_migrate_legacy() / --migrate-legacy to
+    persist the result.
+
+    Migration rules:
+    - Adds schema_version=1, confidence, risk, classification, human_review.
+    - Evidence defaults to [{kind: manual, ref: legacy, locator: migrated-v0}];
+      locator is non-empty so it passes deep validation.
+    - Forces status=needs-approval for all non-terminal candidates regardless
+      of type (conservative — human must review migrated facts).
+    - Terminal statuses (auto-promoted, approved, rejected, duplicate,
+      obsolete) are preserved unchanged.
+    """
     if c.get("schema_version") == 1:
         return c
     c["schema_version"] = 1
     c.setdefault("confidence", "medium")
     c.setdefault("risk", "medium")
-    c.setdefault("evidence", [{"kind": "manual", "ref": "legacy", "locator": ""}])
+    # Fix 2/4: default evidence has a non-empty locator so it passes validation
+    c.setdefault("evidence", [{
+        "kind": "manual",
+        "ref": "legacy-migration",
+        "locator": "migrated-v0",
+        "observed_at": now_iso(),
+    }])
     c.setdefault("classification", {
         "auto_promotable": False,
         "needs_human_approval": True,
-        "reason": "Migrated from schema v0; manual review required.",
+        "reason": "Migrated from schema v0; human review required before promotion.",
     })
     c.setdefault("human_review", {
         "required": True,
@@ -360,17 +447,41 @@ def migrate_legacy(c: dict) -> dict:
         "reviewed_at": None,
         "notes": None,
     })
-    # Force needs-approval unless already in a terminal state
-    terminal = {"auto-promoted", "approved", "rejected", "duplicate", "obsolete"}
-    if c.get("status") not in terminal:
+    # Force needs-approval for all non-terminal statuses (conservative)
+    if c.get("status") not in TERMINAL_STATUS:
         c["status"] = "needs-approval"
     return c
 
 
 def load_and_migrate(path: Path) -> list[dict]:
+    """Load candidates and apply in-memory migration for v0 entries.
+
+    Fix 4 — this is a read-time compatibility shim only. Changes are NOT
+    persisted to disk. Call cmd_migrate_legacy() / --migrate-legacy to save.
+    """
     candidates = load_candidates(path)
     migrated = [migrate_legacy(c) for c in candidates]
     return migrated
+
+
+def cmd_migrate_legacy(topic_id: str, memory_dir: Path, dry_run: bool = False) -> None:
+    """Fix 4 — persist v0→v1 migration to disk."""
+    cf = candidates_file(memory_dir, topic_id)
+    original = load_candidates(cf)
+    v0_count = sum(1 for c in original if c.get("schema_version") != 1)
+    if v0_count == 0:
+        print(f"All {len(original)} candidates are already schema v1. Nothing to migrate.")
+        return
+    migrated = [migrate_legacy(c) for c in original]
+    print(f"Migrating {v0_count}/{len(original)} legacy candidates to schema v1:")
+    for orig, mig in zip(original, migrated):
+        if orig.get("schema_version") != 1:
+            print(f"  {mig['id']}  [{mig.get('type','?')}]  {str(mig.get('claim',''))[:60]}")
+    if dry_run:
+        print("\n[dry-run] No changes written.")
+        return
+    save_candidates(cf, migrated)
+    print(f"\nPersisted migration → {cf}")
 
 
 # ---------------------------------------------------------------------------
@@ -541,6 +652,15 @@ def cmd_approve(
         print(f"ERROR: candidate {cand_id} not found", file=sys.stderr)
         sys.exit(1)
 
+    # Non-blocking fix: prevent --approve on already-terminal candidates
+    if target.get("status") in TERMINAL_STATUS:
+        print(
+            f"ERROR: candidate {cand_id} is already in terminal state "
+            f"'{target['status']}' and cannot be approved again.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     errors = validate_candidate_v1(target)
     if errors:
         print(f"ERROR: candidate fails schema validation:", file=sys.stderr)
@@ -561,6 +681,8 @@ def cmd_approve(
         facts=[str(target["claim"])],
         existing_bullets=existing_bullets,
     )
+    # TODO (PR 6): pass candidate_id and evidence metadata into write_batch_to_memory
+    # so the L0 audit entry records provenance traceable back to this candidate.
 
     target["status"] = "approved"
     target["approved_at"] = now_iso()
@@ -673,19 +795,23 @@ def main() -> int:
     group.add_argument("--reject", metavar="CANDIDATE_ID", help="Reject a candidate")
     group.add_argument("--show", metavar="CANDIDATE_ID", help="Show full candidate details")
     group.add_argument("--validate", action="store_true",
-                       help="Validate all candidates against schema v1")
+                       help="Validate all candidates against schema v1 (read-only; does not persist migration)")
+    group.add_argument("--migrate-legacy", action="store_true",
+                       help="Persist v0→v1 schema migration to disk (use --dry-run to preview)")
 
-    # Provenance flags for --add (Fix A1)
+    # Provenance flags for --add (Fix A1 + Fix 3)
     parser.add_argument("--source-kind", default="session_history",
-                        help="Evidence kind: session_history|repo_doc|pr|review|pyrogram|memory_md|manual")
+                        choices=sorted(VALID_EVIDENCE_KINDS),
+                        help="Evidence kind (default: session_history)")
     parser.add_argument("--source-ref", default="",
-                        help="Human-readable evidence reference (e.g. 'batch 12, message 47')")
+                        help="Human-readable evidence reference, e.g. 'batch 12, message 47' (required for add)")
     parser.add_argument("--locator", default="",
-                        help="Machine-usable locator (e.g. 'batch:12:msg:47')")
+                        help="Machine-usable position locator, e.g. 'batch:12:msg:47' or 'line:10' (required for add)")
     parser.add_argument("--confidence", default="medium", choices=["low", "medium", "high"],
                         help="Confidence level (default: medium)")
-    parser.add_argument("--risk", default="low", choices=["low", "medium", "high"],
-                        help="Risk level (default: low)")
+    # Non-blocking fix: default medium (safer than low) to make risk explicit
+    parser.add_argument("--risk", default="medium", choices=["low", "medium", "high"],
+                        help="Risk level (default: medium — use --risk low to enable auto-promotion)")
     parser.add_argument("--project", default=None, help="Project name")
     parser.add_argument("--summary", default=None, help="Human-readable context for reviewers")
     parser.add_argument("--suggested-target", default=None,
@@ -739,6 +865,8 @@ def main() -> int:
         cmd_show(topic_id, args.show, memory_dir)
     elif args.validate:
         return cmd_validate(topic_id, memory_dir)
+    elif args.migrate_legacy:
+        cmd_migrate_legacy(topic_id, memory_dir, dry_run=args.dry_run)
 
     return 0
 

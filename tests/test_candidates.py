@@ -258,14 +258,38 @@ class TestCanAutoPromote(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("schema", reason.lower())
 
-    def test_medium_confidence_medium_risk_passes(self):
+    def test_medium_confidence_low_risk_passes(self):
+        """risk=low + confidence=medium is the minimum qualifying combination."""
         c = _build(
             claim="- The API returns JSON responses",
             confidence="medium",
-            risk="medium",
+            risk="low",
         )
         ok, reason = mc.can_auto_promote(c)
         self.assertTrue(ok, reason)
+
+    def test_medium_risk_blocked(self):
+        """Fix 1: risk=medium must NOT auto-promote (only risk=low qualifies).
+
+        build_candidate_v1 sets status=needs-approval when risk!=low (via
+        derive_classification), so can_auto_promote correctly fails at the
+        status gate. The important invariant is that the result is False.
+        """
+        c = _build(
+            claim="- The API returns JSON responses",
+            confidence="high",
+            risk="medium",
+        )
+        self.assertEqual(c["status"], "needs-approval",
+                         "build_candidate_v1 must set needs-approval for risk=medium")
+        ok, reason = mc.can_auto_promote(c)
+        self.assertFalse(ok, f"risk=medium should be blocked; got ok=True, reason={reason!r}")
+
+    def test_medium_risk_derive_classification_blocks(self):
+        """Fix 1: derive_classification itself rejects risk=medium with a risk-specific reason."""
+        cls = mc.derive_classification("fact", "high", "medium", "- safe claim")
+        self.assertFalse(cls["auto_promotable"])
+        self.assertIn("risk", cls["reason"])
 
 
 # ---------------------------------------------------------------------------
@@ -447,6 +471,194 @@ class TestMigrateLegacy(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
+# Tests: validate_evidence_entry (Fix 2 — deep validation)
+# ---------------------------------------------------------------------------
+
+class TestValidateEvidenceEntry(unittest.TestCase):
+
+    def _valid_ev(self):
+        return mc.make_evidence_entry("session_history", "batch 1", "batch:1:msg:1")
+
+    def test_valid_entry_passes(self):
+        errs = mc.validate_evidence_entry(self._valid_ev())
+        self.assertEqual(errs, [], errs)
+
+    def test_non_dict_rejected(self):
+        errs = mc.validate_evidence_entry("not a dict")
+        self.assertEqual(len(errs), 1)
+        self.assertIn("dict", errs[0])
+
+    def test_missing_kind(self):
+        ev = self._valid_ev()
+        del ev["kind"]
+        errs = mc.validate_evidence_entry(ev)
+        self.assertTrue(any("kind" in e for e in errs), errs)
+
+    def test_unknown_kind(self):
+        ev = self._valid_ev()
+        ev["kind"] = "telepathy"
+        errs = mc.validate_evidence_entry(ev)
+        self.assertTrue(any("kind" in e for e in errs), errs)
+
+    def test_empty_ref_rejected(self):
+        ev = self._valid_ev()
+        ev["ref"] = ""
+        errs = mc.validate_evidence_entry(ev)
+        self.assertTrue(any("ref" in e for e in errs), errs)
+
+    def test_whitespace_ref_rejected(self):
+        ev = self._valid_ev()
+        ev["ref"] = "   "
+        errs = mc.validate_evidence_entry(ev)
+        self.assertTrue(any("ref" in e for e in errs), errs)
+
+    def test_empty_locator_rejected(self):
+        ev = self._valid_ev()
+        ev["locator"] = ""
+        errs = mc.validate_evidence_entry(ev)
+        self.assertTrue(any("locator" in e for e in errs), errs)
+
+    def test_whitespace_locator_rejected(self):
+        ev = self._valid_ev()
+        ev["locator"] = "  "
+        errs = mc.validate_evidence_entry(ev)
+        self.assertTrue(any("locator" in e for e in errs), errs)
+
+    def test_missing_observed_at(self):
+        ev = self._valid_ev()
+        del ev["observed_at"]
+        errs = mc.validate_evidence_entry(ev)
+        self.assertTrue(any("observed_at" in e for e in errs), errs)
+
+    def test_all_valid_kinds_accepted(self):
+        for kind in mc.VALID_EVIDENCE_KINDS:
+            ev = mc.make_evidence_entry(kind, "some ref", "some:locator")
+            errs = mc.validate_evidence_entry(ev)
+            self.assertEqual(errs, [], f"kind {kind!r} should be valid but got: {errs}")
+
+
+# ---------------------------------------------------------------------------
+# Tests: make_evidence_entry validation (Fix 2)
+# ---------------------------------------------------------------------------
+
+class TestMakeEvidenceEntry(unittest.TestCase):
+
+    def test_valid_entry_created(self):
+        ev = mc.make_evidence_entry("repo_doc", "README.md", "line:10")
+        self.assertEqual(ev["kind"], "repo_doc")
+        self.assertEqual(ev["ref"], "README.md")
+        self.assertEqual(ev["locator"], "line:10")
+        self.assertIn("observed_at", ev)
+
+    def test_unknown_kind_raises(self):
+        with self.assertRaises(ValueError) as ctx:
+            mc.make_evidence_entry("telepathy", "ref", "loc")
+        self.assertIn("kind", str(ctx.exception).lower())
+
+    def test_empty_ref_raises(self):
+        with self.assertRaises(ValueError) as ctx:
+            mc.make_evidence_entry("manual", "", "loc")
+        self.assertIn("ref", str(ctx.exception).lower())
+
+    def test_whitespace_ref_raises(self):
+        with self.assertRaises(ValueError):
+            mc.make_evidence_entry("manual", "   ", "loc")
+
+    def test_empty_locator_raises(self):
+        with self.assertRaises(ValueError) as ctx:
+            mc.make_evidence_entry("manual", "ref", "")
+        self.assertIn("locator", str(ctx.exception).lower())
+
+    def test_whitespace_locator_raises(self):
+        with self.assertRaises(ValueError):
+            mc.make_evidence_entry("manual", "ref", "  ")
+
+    def test_ref_and_locator_stripped(self):
+        ev = mc.make_evidence_entry("manual", "  ref  ", "  loc  ")
+        self.assertEqual(ev["ref"], "ref")
+        self.assertEqual(ev["locator"], "loc")
+
+
+# ---------------------------------------------------------------------------
+# Tests: validate_candidate_v1 deep evidence (Fix 2)
+# ---------------------------------------------------------------------------
+
+class TestValidateCandidateV1DeepEvidence(unittest.TestCase):
+
+    def test_bad_evidence_kind_propagates(self):
+        c = _build()
+        c["evidence"][0]["kind"] = "bad_kind"
+        errs = mc.validate_candidate_v1(c)
+        self.assertTrue(any("evidence[0]" in e for e in errs), errs)
+
+    def test_empty_locator_propagates(self):
+        c = _build()
+        c["evidence"][0]["locator"] = ""
+        errs = mc.validate_candidate_v1(c)
+        self.assertTrue(any("evidence[0]" in e and "locator" in e for e in errs), errs)
+
+    def test_empty_ref_propagates(self):
+        c = _build()
+        c["evidence"][0]["ref"] = ""
+        errs = mc.validate_candidate_v1(c)
+        self.assertTrue(any("evidence[0]" in e and "ref" in e for e in errs), errs)
+
+    def test_multiple_evidence_entries_each_validated(self):
+        c = _build()
+        c["evidence"].append({"kind": "bad", "ref": "", "locator": "", "observed_at": ""})
+        errs = mc.validate_candidate_v1(c)
+        self.assertTrue(any("evidence[1]" in e for e in errs), errs)
+
+
+# ---------------------------------------------------------------------------
+# Tests: migrate_legacy evidence (Fix 4 — non-empty locator)
+# ---------------------------------------------------------------------------
+
+class TestMigrateLegacyEvidence(unittest.TestCase):
+
+    def test_migrated_evidence_passes_deep_validation(self):
+        c = {
+            "id": "CAND-OLD",
+            "created_at": "2026-01-01T00:00:00Z",
+            "created_by": "old",
+            "topic_id": "1",
+            "type": "fact",
+            "claim": "- old fact",
+            "status": "candidate",
+        }
+        migrated = mc.migrate_legacy(c)
+        ev = migrated["evidence"][0]
+        errs = mc.validate_evidence_entry(ev)
+        self.assertEqual(errs, [], f"migrated evidence failed deep validation: {errs}")
+
+    def test_migrated_evidence_locator_not_empty(self):
+        c = {
+            "id": "CAND-OLD2",
+            "created_at": "2026-01-01T00:00:00Z",
+            "created_by": "old",
+            "topic_id": "1",
+            "type": "fact",
+            "claim": "- old fact",
+            "status": "candidate",
+        }
+        migrated = mc.migrate_legacy(c)
+        self.assertTrue(migrated["evidence"][0]["locator"].strip())
+
+    def test_full_migrated_candidate_passes_schema_validation(self):
+        c = {
+            "id": "CAND-OLD3",
+            "created_at": "2026-01-01T00:00:00Z",
+            "created_by": "old",
+            "topic_id": "1",
+            "type": "fact",
+            "claim": "- old fact",
+            "status": "candidate",
+        }
+        migrated = mc.migrate_legacy(c)
+        errs = mc.validate_candidate_v1(migrated)
+        self.assertEqual(errs, [], f"fully migrated candidate failed validation: {errs}")
+
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
