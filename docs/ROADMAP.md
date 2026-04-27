@@ -35,6 +35,40 @@
 - [ ] Add task/review handoff templates.
 - [ ] Add memory extraction and promotion policies.
 
+
+### Phase 2 — additional backlog items (added 2026-04-27)
+
+#### 2.5 — Unified read-merge-write archiver (Pyrogram + OpenClaw sessions)
+
+Extend `archive-batch-v2.py` with a **read-before-write** Pyrogram step:
+
+```
+1. Read Pyrogram delta (messages since last-pyrogram-id in header)
+2. Read OpenClaw session transcripts (existing logic)
+3. Merge + conflict detect
+4. Write to memory/topic-<id>.md
+```
+
+**Header comment v3:**
+```
+<!-- last-batch: 3 | last-write: 2026-04-27T19:11:00 | batches: 3 | last-pyrogram-id: 15897 | pyrogram-ts: 2026-04-27T16:00:00 -->
+```
+
+**Key rules:**
+- `last-pyrogram-id` → idempotency; next run reads only new messages
+- Pyrogram mandatory on first `--write` (no memory file), optional delta on subsequent runs
+- `--reset` → full Pyrogram read from topic start
+- **Batching required:** if Pyrogram returns >200 messages, split into sub-batches;
+  each sub-batch writes its own `last-pyrogram-id` checkpoint (partial progress preserved)
+- FloodWait: retry policy in `PYROGRAM_FLOOD_WAIT.md`
+
+#### 2.6 — Skill invocation vocabulary doc
+
+`docs/SKILL_VOCABULARY.md` — decision guide for when/how to call `/archive-context`,
+`/read-context`, `read-topic.py`. Includes decision tree, chaining example, staleness policy.
+
+**Status:** drafted, pending commit.
+
 ## Phase 3 — Candidate Knowledge Pipeline
 
 - [ ] Define YAML candidate schema.
