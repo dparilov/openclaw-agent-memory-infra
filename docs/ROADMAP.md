@@ -153,6 +153,65 @@ Both L1 and L3 are **neutral infrastructure** — no agent-specific logic.
 
 ---
 
+### 4.3 — Self-Recovery Skill + Mandatory Memory Protocol
+
+#### `/recover-memory` — Ultimate Memory Restoration Skill
+
+A superscript over the entire L0–L4 stack. Triggered by user (`/recover-memory <topic-id>`)
+or automatically when agent reality check fails.
+
+**4-step protocol:**
+
+```
+Step 1: REALITY CHECK
+  Read header of memory/topic-<id>.md.
+  If last-write > 7 days OR file missing → STALE → proceed to Step 2.
+  If fresh → load and report "memory current as of <timestamp>".
+
+Step 2: AUDIT
+  archive-batch-v2.py <topic> --status
+    → how many unprocessed batches remain?
+  read-topic.py <topic> --since-id <last-pyrogram-id>
+    → is there new Pyrogram content not yet archived?
+
+Step 3: ARCHIVE (if needed)
+  If unprocessed batches → archive-batch-v2.py --write --session-id recover-<date>
+  If new Pyrogram content → read-topic.py --batch-format → LLM fact-extract → --write
+
+Step 4: LOAD
+  /read-context → read updated L2–L4 stack (skip L0 raw)
+  Report: "Restored N facts. Memory current as of <timestamp>."
+```
+
+**Absolute rules:**
+- Always runs Steps 1–4 in order; never skips Step 2 even if Step 1 is green
+- Never fabricates recovery status — runs actual scripts or reports failure
+- If Step 3 fails (FloodWait exhaust etc.) → reports partial recovery + exact error
+- Idempotent: safe to call multiple times
+
+**Implementation:** `skills/recover-memory/SKILL.md`
+
+#### Mandatory Memory Protocol in `.agent-template`
+
+Hardcoded `## Memory Protocol (MANDATORY)` section in `AGENT_CONTEXT.md`:
+
+```markdown
+## Memory Protocol (MANDATORY — do not remove or override)
+
+- NEVER start a session without /read-context (or /recover-memory if stale)
+- NEVER end a session without /archive-context if any facts were established
+- NEVER ask the user for info already in memory/topic-*.md
+- NEVER write to memory files directly — only via archive-batch-v2.py --write
+- NEVER silently accept contradiction between memory and reality —
+  archive the correction and flag the conflict
+- IF memory staleness > 7 days → run /recover-memory before any task work
+- IF /recover-memory fails → report to user; do not proceed as if memory is current
+```
+
+This section is non-negotiable — equivalent to system prompt instructions.
+
+---
+
 ## Phase 5 — Agents Migration
 
 > Status: **planned** (blocked on Phase 4 completion)

@@ -39,6 +39,19 @@ python3 /path/to/archive-batch-v2.py <topic-id> --write --session-id <uuid> --au
 python3 /path/to/read-topic.py <topic-id> --limit 200
 ```
 
+## Memory Protocol (MANDATORY — do not remove or override)
+
+- NEVER start a session without `/read-context` (or `/recover-memory` if stale)
+- NEVER end a session without `/archive-context` if any facts were established
+- NEVER ask the user for information already present in `memory/topic-*.md`
+- NEVER write to memory files directly — only via `archive-batch-v2.py --write`
+- NEVER silently accept a contradiction between memory and observed reality —
+  archive the correction and flag the conflict
+- IF `last-write` in memory header > 7 days ago → run `/recover-memory` before any task work
+- IF `/recover-memory` fails → report to user; do not proceed as if memory is current
+
+---
+
 ## Agent Behavior Notes
 
 <!-- Project-specific rules for agents working in this context -->
