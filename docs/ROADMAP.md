@@ -19,7 +19,7 @@
 - [x] Forbid `/archive-context` without explicit topic — update SKILL.md.
 - [x] Document MeridianA/OpenClaw runtime dependency (`docs/MERIDIANA_DEPENDENCY.md`).
 - [ ] Add lock/flood-wait handling strategy for Pyrogram userbot reads.
-- [ ] Document fallback order: memory archive → OpenClaw transcripts → Telegram live read.
+- [x] Document fallback order: memory archive → OpenClaw transcripts → Telegram live read. See `docs/FALLBACK_ORDER.md`.
 - [ ] Test name resolver end-to-end in telemost topic (verify `telemost` resolves to `7301`).
 - [x] Define output contract for `memory/topic-<id>.md` (archive writer format). See `docs/MEMORY_OUTPUT_CONTRACT.md`.
 - [x] Implement archive writer: `--write` mode, idempotency, `--mark-done` integration.
