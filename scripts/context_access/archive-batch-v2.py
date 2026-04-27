@@ -297,6 +297,48 @@ def save_progress(path: Path, progress: dict[str, Any]) -> None:
     write_text_in_lock(path, json.dumps(progress, ensure_ascii=False, indent=2) + "\n")
 
 
+def infer_next_batch_n(
+    memory_file: Path,
+    progress_file: Path,
+    topic_id: str,
+    explicit_batch: int | None = None,
+) -> int:
+    """Return the next batch number to write, without reading session files.
+
+    Priority (highest wins):
+      1. explicit_batch  — --batch flag, always used as-is.
+      2. max(progress last_completed_batch, memory header last-batch,
+             highest section Batch N) + 1
+
+    This ensures --write is correct even when the progress file is absent
+    but the memory file already contains written batches.
+    """
+    if explicit_batch is not None:
+        return explicit_batch
+
+    candidates: list[int] = []
+
+    # Source 1: progress file
+    prog = load_progress(progress_file, topic_id)
+    candidates.append(int(prog.get("last_completed_batch", -1)))
+
+    # Source 2 & 3: memory file header + section headers
+    if memory_file.exists():
+        try:
+            content = memory_file.read_text(encoding="utf-8")
+        except OSError:
+            content = ""
+        # <!-- last-batch: N | ... -->
+        m = re.search(r"last-batch:\s*(\d+)", content)
+        if m:
+            candidates.append(int(m.group(1)))
+        # ## [date] Batch N — session ...
+        for m in re.finditer(r"## \[.*?\] Batch (\d+)", content):
+            candidates.append(int(m.group(1)))
+
+    return max(candidates) + 1
+
+
 def print_stats(topic_id: str, paths: list[str], raw_count: int, deduped_count: int, duplicate_count: int, batch_size: int, total_batches: int) -> None:
     print("=" * 60)
     print(f"ARCHIVE SOURCE STATS  [topic:{topic_id}]")
@@ -626,9 +668,16 @@ def main() -> int:
         session_id = args.session_id or str(uuid.uuid4())[:12]
         memory_file = resolve_memory_file(args.memory_file, args.memory_dir, args.topic_id)
 
-        # Derive batch_n from --batch or progress file — no session file scan needed.
-        progress = load_progress(pfile, args.topic_id)
-        batch_n = args.batch if args.batch is not None else int(progress.get("last_completed_batch", -1)) + 1
+        # Derive batch_n from memory header, progress file, or --batch flag.
+        # No session file scan needed (A5).
+        # TODO(PR6): add --source-kind / --source-ref / --source-locator flags
+        #   so standalone --write calls can record structured audit provenance.
+        batch_n = infer_next_batch_n(
+            memory_file=memory_file,
+            progress_file=pfile,
+            topic_id=args.topic_id,
+            explicit_batch=args.batch,
+        )
 
         # Read existing memory file for conflict detection.
         existing_content = memory_file.read_text(encoding="utf-8") if memory_file.exists() else ""

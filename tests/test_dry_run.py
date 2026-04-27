@@ -312,6 +312,83 @@ class TestPromoteAutoDryRun(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# infer_next_batch_n unit tests (A5)
+# ---------------------------------------------------------------------------
+
+class TestInferNextBatchN(unittest.TestCase):
+    """Unit tests for infer_next_batch_n — batch number inference without session files."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.progress_dir = self.tmp / "progress"
+        self.progress_dir.mkdir()
+        self.ab = _load("archive_batch_v2_infer", "archive-batch-v2.py")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def _pfile(self):
+        return self.progress_dir / "topic-9999-v2.json"
+
+    def _mem(self, content: str) -> Path:
+        p = self.tmp / "memory" / "topic-9999.md"
+        p.parent.mkdir(exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+        return p
+
+    def test_explicit_batch_always_wins(self):
+        """--batch N overrides everything else."""
+        mem = self._mem(
+            "<!-- last-batch: 7 | last-write: 2026-01-01 | batches: 0-7 -->\n"
+            "# Memory: topic-9999\n"
+            "## [2026-01-01] Batch 7 \u2014 session s1\n- fact\n"
+        )
+        n = self.ab.infer_next_batch_n(mem, self._pfile(), "9999", explicit_batch=3)
+        self.assertEqual(n, 3)
+
+    def test_memory_header_no_progress(self):
+        """Memory has last-batch: 3, no progress file → next batch is 4."""
+        mem = self._mem(
+            "<!-- last-batch: 3 | last-write: 2026-01-01 | batches: 0-3 -->\n"
+            "# Memory: topic-9999\n"
+            "## [2026-01-01] Batch 3 \u2014 session s1\n- fact\n"
+        )
+        n = self.ab.infer_next_batch_n(mem, self._pfile(), "9999")
+        self.assertEqual(n, 4)
+
+    def test_sections_without_header(self):
+        """Memory has section Batch 5 but no <!-- last-batch --> header → next is 6."""
+        mem = self._mem(
+            "# Memory: topic-9999\n\n"
+            "## [2026-01-01] Batch 5 \u2014 session s2\n- old fact\n"
+        )
+        n = self.ab.infer_next_batch_n(mem, self._pfile(), "9999")
+        self.assertEqual(n, 6)
+
+    def test_progress_lower_than_memory_memory_wins(self):
+        """Progress says batch 1 done, memory header says 4 → next is 5."""
+        import json
+        pfile = self._pfile()
+        pfile.write_text(
+            json.dumps({"topic_id": "9999", "last_completed_batch": 1}),
+            encoding="utf-8",
+        )
+        mem = self._mem(
+            "<!-- last-batch: 4 | last-write: 2026-01-01 | batches: 0-4 -->\n"
+            "# Memory: topic-9999\n"
+            "## [2026-01-01] Batch 4 \u2014 session s3\n- fact\n"
+        )
+        n = self.ab.infer_next_batch_n(mem, pfile, "9999")
+        self.assertEqual(n, 5)
+
+    def test_no_memory_no_progress_returns_zero(self):
+        """Completely fresh state: no memory file, no progress → batch 0."""
+        absent = self.tmp / "memory" / "topic-9999.md"  # does not exist
+        n = self.ab.infer_next_batch_n(absent, self._pfile(), "9999")
+        self.assertEqual(n, 0)
+
+
+# ---------------------------------------------------------------------------
 # archive-batch-v2 --write without session files (A5)
 # ---------------------------------------------------------------------------
 
