@@ -30,8 +30,15 @@ Use this skill when the user asks:
 3. **Read-only for `--status`.** If user asks `--status`, do not write memory files and do not mark progress.
 4. **No hidden archive writes.** Do not append to `memory/*.md` unless the user explicitly asks to process/archive a batch.
 5. **No reset without explicit confirmation.** `--reset` is destructive; ask before running it.
-6. **Report stdout verbatim for status.** For `--status`, paste the script output exactly enough to preserve raw/deduped/duplicate counts.
-7. **If tool execution fails**, quote the exact error and offer the explicit command for host/exec fallback.
+6. **Report stdout verbatim for status.** For `--status`, paste the script output exactly. Do NOT paraphrase, summarize, or reformat it.
+7. **NEVER fabricate script output.** If you did not receive actual stdout from the script, you MUST say so explicitly. Do not describe what the output "probably" looks like. Do not invent file paths, message counts, or status summaries.
+8. **If tool execution fails or returns no output**, respond with exactly:
+   ```
+   [blocked] Script did not run — tool execution failed or returned no output.
+   Run manually:
+   python3 /home/dima/projects/openclaw-agent-memory-infra/scripts/context_access/archive-batch-v2.py <topic_id> --status
+   ```
+   Then stop. Do not attempt to reconstruct or guess the output.
 
 ## Syntax
 
