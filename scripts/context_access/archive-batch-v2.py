@@ -38,6 +38,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from io_utils import atomic_write_text, atomic_append_text
+
 DEFAULT_AGENTS_BASE = Path.home() / ".openclaw" / "agents"
 DEFAULT_PROGRESS_DIR = Path.home() / ".openclaw" / "workspace" / "ops"
 
@@ -292,7 +294,7 @@ def load_progress(path: Path, topic_id: str) -> dict[str, Any]:
 
 def save_progress(path: Path, progress: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(progress, ensure_ascii=False, indent=2) + "\n")
+    atomic_write_text(path, json.dumps(progress, ensure_ascii=False, indent=2) + "\n")
 
 
 def print_stats(topic_id: str, paths: list[str], raw_count: int, deduped_count: int, duplicate_count: int, batch_size: int, total_batches: int) -> None:
@@ -438,8 +440,7 @@ def write_audit_log(
         "facts": [f for f in facts if f.strip()],
         "sources": [os.path.basename(p) for p in (source_paths or [])],
     }
-    with open(audit_path, "a", encoding="utf-8") as fh:
-        fh.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+    atomic_append_text(audit_path, _json.dumps(entry, ensure_ascii=False) + "\n")
 
     print(f"L0 audit: wrote entry to {audit_path}", file=sys.stderr)
     return audit_path
@@ -528,7 +529,7 @@ def write_batch_to_memory(
         else:
             new_content = new_meta + "\n" + existing_content + section
 
-    memory_file.write_text(new_content, encoding="utf-8")
+    atomic_write_text(memory_file, new_content)
 
     print(f"Written: {fact_count} facts to {memory_file} (Batch {batch_n}, session {session_id})")
     if conflicts:

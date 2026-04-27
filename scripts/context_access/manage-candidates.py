@@ -44,6 +44,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from io_utils import atomic_write_text
+
 # ---------------------------------------------------------------------------
 # PyYAML is a hard requirement — no fallback (Fix A2)
 # ---------------------------------------------------------------------------
@@ -158,9 +160,9 @@ def load_candidates(path: Path) -> list[dict]:
 
 
 def save_candidates(path: Path, candidates: list[dict]) -> None:
-    path.write_text(
+    atomic_write_text(
+        path,
         yaml.dump(candidates, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
     )
 
 

@@ -30,6 +30,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from io_utils import atomic_write_text
+
 DEFAULT_AGENTS_BASE = Path.home() / ".openclaw" / "agents"
 
 
@@ -159,7 +161,7 @@ def build_topic_page(topic_id: str, memory_file: Path, wiki_dir: Path, dry_run: 
 
     wiki_file = wiki_dir / f"topic-{topic_id}.md"
     if not dry_run:
-        wiki_file.write_text("\n".join(lines), encoding="utf-8")
+        atomic_write_text(wiki_file, "\n".join(lines))
 
     return {
         "topic_id": topic_id,
@@ -209,7 +211,7 @@ def build_by_type_pages(all_facts_by_type: dict[str, list[dict]], wiki_dir: Path
             lines.append("")
 
         if not dry_run:
-            (type_dir / f"{fact_type}.md").write_text("\n".join(lines), encoding="utf-8")
+            atomic_write_text(type_dir / f"{fact_type}.md", "\n".join(lines))
 
 
 def build_index(topic_stats: list[dict], wiki_dir: Path, dry_run: bool = False) -> None:
@@ -247,7 +249,7 @@ def build_index(topic_stats: list[dict], wiki_dir: Path, dry_run: bool = False) 
     lines.append("")
 
     if not dry_run:
-        (wiki_dir / "index.md").write_text("\n".join(lines), encoding="utf-8")
+        atomic_write_text(wiki_dir / "index.md", "\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
@@ -360,9 +362,7 @@ def main() -> int:
         "total_facts": total_facts,
         "topics": topic_stats,
     }
-    (wiki_dir / "WIKI_META.json").write_text(
-        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    atomic_write_text(wiki_dir / "WIKI_META.json", json.dumps(meta, ensure_ascii=False, indent=2))
 
     print(f"\nWiki built:")
     print(f"  Topics:      {len(topic_stats)}")
