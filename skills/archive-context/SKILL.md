@@ -113,15 +113,25 @@ This prints a deduplicated batch for inspection. It does **not** write memory an
 
 ## Actual archive/write mode
 
-Not implemented yet in the stable pipeline.
+**Implemented.** Use `--write` to append a batch to `memory/topic-<id>.md`:
 
-If the user asks to archive for real, say:
-
-```text
-[blocked] Stable archive writer is not implemented yet. Current safe operations are --status, --total, and --batch preview.
+```bash
+python3 /home/dima/projects/openclaw-agent-memory-infra/scripts/context_access/archive-batch-v2.py \
+  <topic_id> \
+  --write \
+  --session-id <uuid> \
+  --auto-mark-done
 ```
 
-Then offer the next implementation step: define archive writer output contract for `memory/topic-<id>.md`.
+- `--session-id` enables idempotency (same session-id will be skipped on re-run)
+- `--auto-mark-done` marks the batch as processed in progress file
+- Output file: `<project>/.agent/memory/topic-<id>.md`
+- Conflict detection is heuristic (⚠️ CONFLICT markers); semantic dedup is Phase 3
+
+For explicit memory-file path override:
+```bash
+... --memory-file /path/to/memory/topic-<id>.md
+```
 
 ## Known provider issue
 
