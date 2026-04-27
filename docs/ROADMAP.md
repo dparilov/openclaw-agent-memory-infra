@@ -18,7 +18,7 @@
 - [x] Add topic name resolver (numeric ID or name, e.g. `telemost`).
 - [x] Forbid `/archive-context` without explicit topic — update SKILL.md.
 - [x] Document MeridianA/OpenClaw runtime dependency (`docs/MERIDIANA_DEPENDENCY.md`).
-- [ ] Add lock/flood-wait handling strategy for Pyrogram userbot reads.
+- [x] Add lock/flood-wait handling strategy for Pyrogram userbot reads. See `docs/PYROGRAM_FLOOD_WAIT.md`.
 - [x] Document fallback order: memory archive → OpenClaw transcripts → Telegram live read. See `docs/FALLBACK_ORDER.md`.
 - [x] Test name resolver end-to-end in telemost topic (verify `telemost` resolves to `7301`).
 - [x] Define output contract for `memory/topic-<id>.md` (archive writer format). See `docs/MEMORY_OUTPUT_CONTRACT.md`.
