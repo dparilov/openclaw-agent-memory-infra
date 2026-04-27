@@ -224,28 +224,25 @@ class TestPromoteAutoDryRun(unittest.TestCase):
         candidates_dir = self.memory_dir / "candidates"
         candidates_dir.mkdir(parents=True)
 
-        self.candidates_file = candidates_dir / "topic-9999.yaml"
-        candidate = {
-            "id": "cand-dryrun-001",
-            "claim": "Agent should always validate inputs before processing.",
-            "fact_type": "process",
-            "status": "candidate",
-            "confidence": "high",
-            "risk": "low",
-            "classification": "auto-promotable",
-            "evidence": [
-                {
-                    "kind": "session_history",
-                    "ref": "batch 0",
-                    "locator": "batch:0:msg:1",
-                    "observed_at": "2026-01-01T00:00:00Z",
-                }
-            ],
-            "human_review": {"summary": "", "suggested_targets": [], "project": ""},
-            "created_at": "2026-01-01T00:00:00Z",
-        }
+        # Correct filename: candidates_file() returns topic-{id}-candidates.yaml
+        self.candidates_file = candidates_dir / "topic-9999-candidates.yaml"
+
+        # Use build_candidate_v1() so the candidate is schema-v1 valid and
+        # passes all can_auto_promote() gates (risk=low, confidence=high,
+        # fact_type=process, evidence non-empty).
+        mc = _load("manage_candidates", "manage-candidates.py")
+        evidence = [mc.make_evidence_entry("session_history", "batch 0", "batch:0:msg:1")]
+        candidate = mc.build_candidate_v1(
+            topic_id="9999",
+            fact_type="process",
+            claim="Agent validates inputs before processing.",
+            confidence="high",
+            risk="low",
+            evidence=evidence,
+            created_by="test",
+        )
         self.candidates_file.write_text(
-            yaml.dump({"candidates": [candidate]}), encoding="utf-8"
+            yaml.dump([candidate]), encoding="utf-8"
         )
 
     def tearDown(self):
@@ -285,7 +282,7 @@ class TestPromoteAutoDryRun(unittest.TestCase):
 
         data = yaml.safe_load(self.candidates_file.read_text(encoding="utf-8"))
         self.assertEqual(
-            data["candidates"][0]["status"],
+            data[0]["status"],
             "candidate",
             "candidate status must remain 'candidate' after dry-run promote-auto",
         )
