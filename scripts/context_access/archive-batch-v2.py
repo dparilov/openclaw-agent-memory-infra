@@ -10,11 +10,14 @@ This script is read-only unless --mark-done or --reset is used. It does not
 write memory markdown files.
 
 Usage:
-  python3 scripts/context_access/archive-batch-v2.py <topic_id> --status
-  python3 scripts/context_access/archive-batch-v2.py <topic_id> --total
-  python3 scripts/context_access/archive-batch-v2.py <topic_id> --batch 0
-  python3 scripts/context_access/archive-batch-v2.py <topic_id> --batch 0 --batch-size 100
-  python3 scripts/context_access/archive-batch-v2.py <topic_id> --mark-done 0
+  python3 scripts/context_access/archive-batch-v2.py <topic_id|topic_name> --status
+  python3 scripts/context_access/archive-batch-v2.py <topic_id|topic_name> --total
+  python3 scripts/context_access/archive-batch-v2.py <topic_id|topic_name> --batch 0
+  python3 scripts/context_access/archive-batch-v2.py <topic_id|topic_name> --batch 0 --batch-size 100
+  python3 scripts/context_access/archive-batch-v2.py <topic_id|topic_name> --mark-done 0
+
+  topic_id is REQUIRED — numeric ID (e.g. 7301) or topic name (e.g. telemost).
+  Running without topic_id is not allowed.
 
 Dedupe strategy:
   1. If Telegram inbound metadata is present in message text, dedupe by
@@ -147,6 +150,86 @@ def dedupe_key(role: str, text: str, ts_ms: int) -> str:
     return f"fallback:{role}:{bucket_ms}:{digest}"
 
 
+def discover_topic_names(agents_base: Path) -> dict[str, str]:
+    """Scan session files to build a topic_name -> topic_id map.
+
+    Reads the first 20 lines of each primary JSONL file looking for
+    Telegram metadata containing topic_id and topic_name fields.
+    Returns a dict mapping lowercase topic name to numeric topic id string.
+    Multiple names may map to the same id (aliases are fine).
+    """
+    name_to_id: dict[str, str] = {}
+    pattern = str(agents_base / "*" / "sessions" / "*.jsonl")
+    for path in sorted(glob.glob(pattern)):
+        if ".trajectory." in path or ".reset." in path:
+            continue
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                checked = 0
+                for line in f:
+                    if checked >= 20:
+                        break
+                    parsed = parse_jsonl_line(line.strip())
+                    if not parsed:
+                        continue
+                    role, text, _, _ = parsed
+                    if role != "user":
+                        checked += 1
+                        continue
+                    tid_m = re.search(r'"topic_id"\s*:\s*"?(\d+)"?', text)
+                    tname_m = re.search(r'"topic_name"\s*:\s*"([^"]+)"', text)
+                    if tid_m and tname_m:
+                        tid = tid_m.group(1)
+                        tname = tname_m.group(1).strip()
+                        # Store both the original name (lowercased) and a simplified slug.
+                        name_to_id[tname.lower()] = tid
+                        slug = re.sub(r"[^a-z0-9]+", "-", tname.lower()).strip("-")
+                        if slug and slug != tname.lower():
+                            name_to_id[slug] = tid
+                        break
+                    checked += 1
+        except Exception:
+            continue
+    return name_to_id
+
+
+def resolve_topic_id(raw: str, agents_base: Path) -> str:
+    """Resolve a topic id or name to a numeric topic id string.
+
+    If raw is already numeric, return as-is.
+    Otherwise scan session files for a matching topic_name.
+    Raises SystemExit with a helpful message if not found.
+    """
+    if re.match(r"^\d+$", raw):
+        return raw
+
+    name_map = discover_topic_names(agents_base)
+    key = raw.lower()
+
+    # Exact match.
+    if key in name_map:
+        resolved = name_map[key]
+        print(f"Resolved topic name '{raw}' -> topic_id:{resolved}", file=sys.stderr)
+        return resolved
+
+    # Partial match as last resort (only if unambiguous).
+    matches = [(n, i) for n, i in name_map.items() if key in n or n in key]
+    if len(matches) == 1:
+        resolved = matches[0][1]
+        print(
+            f"Resolved topic name '{raw}' -> '{matches[0][0]}' -> topic_id:{resolved} (partial match)",
+            file=sys.stderr,
+        )
+        return resolved
+
+    available = "\n  ".join(f"{n} -> {i}" for n, i in sorted(name_map.items()))
+    raise SystemExit(
+        f"ERROR: topic name '{raw}' not found in session files.\n"
+        f"Available topic names:\n  {available or '(none found)'}\n"
+        f"Tip: Use numeric topic ID directly, or check {agents_base}/*/sessions/"
+    )
+
+
 def find_topic_paths(topic_id: str, agents_base: Path) -> list[str]:
     found: set[str] = set()
     for pattern in (
@@ -231,18 +314,30 @@ def message_preview(text: str, max_chars: int) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Deduplicating archive batch reader for OpenClaw topic transcripts.")
-    parser.add_argument("topic_id")
+    parser = argparse.ArgumentParser(
+        description="Deduplicating archive batch reader for OpenClaw topic transcripts.",
+        epilog="topic_id is required — numeric (e.g. 7301) or topic name (e.g. telemost).",
+    )
+    parser.add_argument(
+        "topic_id",
+        help="Numeric Telegram topic ID or topic name (e.g. 'telemost', 'OpenClaw_infra'). REQUIRED.",
+    )
     parser.add_argument("--batch", type=int)
     parser.add_argument("--batch-size", type=int, default=100)
     parser.add_argument("--total", action="store_true")
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--mark-done", type=int)
     parser.add_argument("--reset", action="store_true")
-    parser.add_argument("--max-text", type=int, default=0, help="truncate message text in batch output; 0 means no truncation")
+    parser.add_argument(
+        "--max-text", type=int, default=0,
+        help="truncate message text in batch output; 0 means no truncation",
+    )
     parser.add_argument("--agents-base", type=Path, default=DEFAULT_AGENTS_BASE)
     parser.add_argument("--progress-dir", type=Path, default=DEFAULT_PROGRESS_DIR)
     args = parser.parse_args()
+
+    # Resolve topic name -> numeric id before any further processing.
+    args.topic_id = resolve_topic_id(args.topic_id, args.agents_base)
 
     pfile = progress_file(args.progress_dir, args.topic_id)
 
