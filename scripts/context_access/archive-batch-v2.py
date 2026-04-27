@@ -626,10 +626,7 @@ def main() -> int:
         session_id = args.session_id or str(uuid.uuid4())[:12]
         memory_file = resolve_memory_file(args.memory_file, args.memory_dir, args.topic_id)
 
-        # Load messages to determine batch number and totals (needed for header).
-        messages, raw_count, duplicate_count, paths = load_messages(args.topic_id, args.agents_base)
-        deduped_count = len(messages)
-        total_batches = (deduped_count + args.batch_size - 1) // args.batch_size
+        # Derive batch_n from --batch or progress file — no session file scan needed.
         progress = load_progress(pfile, args.topic_id)
         batch_n = args.batch if args.batch is not None else int(progress.get("last_completed_batch", -1)) + 1
 
@@ -660,7 +657,7 @@ def main() -> int:
             session_id=session_id,
             facts=facts,
             existing_bullets=existing_bullets,
-            source_paths=paths,
+            source_paths=None,  # A5: --write decoupled from session files
         )
 
         if written > 0 and args.auto_mark_done:

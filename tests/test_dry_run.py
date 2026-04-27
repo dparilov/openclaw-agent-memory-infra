@@ -311,5 +311,78 @@ class TestPromoteAutoDryRun(unittest.TestCase):
         )
 
 
+# ---------------------------------------------------------------------------
+# archive-batch-v2 --write without session files (A5)
+# ---------------------------------------------------------------------------
+
+class TestWriteWithoutSessions(unittest.TestCase):
+    """Prove --write works even when agents_base contains no session files."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.memory_dir = self.tmp / "memory"
+        self.memory_dir.mkdir()
+        self.agents_base = self.tmp / "no_sessions_here"  # intentionally absent
+        self.progress_dir = self.tmp / "progress"
+        self.progress_dir.mkdir()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def _run_write(self, facts_text: str, extra_args=None) -> tuple[int, str]:
+        ab = _load("archive_batch_v2", "archive-batch-v2.py")
+        facts_file = self.tmp / "facts.txt"
+        facts_file.write_text(facts_text, encoding="utf-8")
+        argv = [
+            "archive-batch-v2.py",
+            "9999",
+            "--write", str(facts_file),
+            "--memory-dir", str(self.memory_dir),
+            "--agents-base", str(self.agents_base),
+            "--progress-dir", str(self.progress_dir),
+            "--session-id", "test-nosession",
+            "--batch", "0",
+        ]
+        if extra_args:
+            argv += extra_args
+        out = io.StringIO()
+        with patch.object(sys, "argv", argv), patch("sys.stdout", out):
+            ret = ab.main()
+        return ret, out.getvalue()
+
+    def test_write_succeeds_without_agents_base(self):
+        """--write with numeric topic_id must succeed even if agents_base doesn't exist."""
+        facts = "- fact one: system works without session files\n- fact two: A5 decoupled\n"
+        ret, _ = self._run_write(facts)
+        self.assertEqual(ret, 0)
+
+    def test_write_creates_memory_file(self):
+        """Written facts must appear in the memory file."""
+        facts = "- decoupled write: no sessions needed\n"
+        self._run_write(facts)
+        mem = self.memory_dir / "topic-9999.md"
+        self.assertTrue(mem.exists(), "Memory file must be created by --write")
+        content = mem.read_text()
+        self.assertIn("decoupled write", content)
+
+    def test_write_dry_run_without_agents_base(self):
+        """--dry-run + --write must also work without session files."""
+        facts = "- dry fact\n"
+        ret, out = self._run_write(facts, extra_args=["--dry-run"])
+        self.assertEqual(ret, 0)
+        self.assertIn("dry-run", out)
+        mem = self.memory_dir / "topic-9999.md"
+        self.assertFalse(mem.exists(), "dry-run must not create memory file")
+
+    def test_agents_base_dir_never_created(self):
+        """--write must not create or touch agents_base at all."""
+        facts = "- standalone write\n"
+        self._run_write(facts)
+        self.assertFalse(
+            self.agents_base.exists(),
+            "agents_base directory must not be created by --write mode",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
