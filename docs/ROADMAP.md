@@ -21,6 +21,9 @@
 - [ ] Add lock/flood-wait handling strategy for Pyrogram userbot reads.
 - [ ] Document fallback order: memory archive → OpenClaw transcripts → Telegram live read.
 - [ ] Test name resolver end-to-end in telemost topic (verify `telemost` resolves to `7301`).
+- [ ] Define output contract for `memory/topic-<id>.md` (archive writer format).
+- [ ] Implement archive writer: `--write` mode, idempotency, `--mark-done` integration.
+- [ ] Validate: no duplicate memory entries across batches after write.
 
 ## Phase 2 — Portable Templates
 
@@ -49,11 +52,3 @@
 - [ ] Document setup for another OpenClaw instance.
 - [ ] Add sanitized example configs.
 - [ ] Decide whether to publish a GitHub remote.
-
-## Phase 6 — Archive Writer (next after Phase 1 complete)
-
-- [ ] Define output contract for `memory/topic-<id>.md`.
-- [ ] Implement `--write` mode in `archive-batch-v2.py` (or separate `archive-writer.py`).
-- [ ] Add idempotency: skip already-written batches.
-- [ ] Integrate `--mark-done` into write flow.
-- [ ] Validate: no duplicate memory entries across batches.
