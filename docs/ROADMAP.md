@@ -27,6 +27,8 @@
 
 ## Phase 2 — Portable Templates
 
+- [ ] Bring `read-topic.py` (Pyrogram userbot fallback) into the repo as a first-class tool with flood-wait/lock handling built in.
+- [ ] Write skill invocation vocabulary: how to call `/archive-context`, `/read-context`, `/read-topic` and when to use each.
 - [ ] Add `.agent-template/` structure.
 - [ ] Add runbooks for Coder, Reviewer, Infrastructure Agent.
 - [ ] Add task/review handoff templates.

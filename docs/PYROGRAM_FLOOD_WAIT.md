@@ -2,6 +2,11 @@
 
 ## Overview
 
+> **Extension point.** For topics fully covered by OpenClaw session files,
+> Pyrogram is not needed — use `archive-batch-v2.py` (source 2 in `FALLBACK_ORDER.md`).
+> Pyrogram becomes relevant only for reading pre-OpenClaw Telegram history.
+> `read-topic.py` is planned to become part of this repo as a first-class fallback tool.
+
 `read-topic.py` uses a Pyrogram userbot session to read Telegram messages
 directly. Two failure modes are common in production use:
 
