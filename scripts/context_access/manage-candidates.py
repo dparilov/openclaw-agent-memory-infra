@@ -5,6 +5,8 @@ manage-candidates.py — L1 Candidate Knowledge manager.
 Manages the intermediate candidate layer between raw fact extraction (L1) and
 working memory (L2). Each candidate is a YAML entry with a status lifecycle.
 
+Schema version: 1 (see docs/CANDIDATE_SCHEMA.md)
+
 Candidate statuses:
   candidate        → freshly extracted, not yet reviewed
   auto-promoted    → meets auto-promotion criteria, written to L2
@@ -15,13 +17,17 @@ Candidate statuses:
   duplicate        → semantically equivalent to an existing L2 fact
 
 Usage:
-  python3 manage-candidates.py <topic_id|topic_name> --add <facts-file>
+  python3 manage-candidates.py <topic_id|topic_name> --add <facts-file> \\
+      [--source-kind session_history] [--source-ref "batch 12"] \\
+      [--locator "msg 42"] [--confidence medium] [--risk low] \\
+      [--project myproject] [--summary "why this matters"]
   python3 manage-candidates.py <topic_id|topic_name> --list
-  python3 manage-candidates.py <topic_id|topic_name> --promote-auto
+  python3 manage-candidates.py <topic_id|topic_name> --promote-auto [--dry-run]
   python3 manage-candidates.py <topic_id|topic_name> --approve <candidate-id>
-  python3 manage-candidates.py <topic_id|topic_name> --reject <candidate-id>
+  python3 manage-candidates.py <topic_id|topic_name> --reject <candidate-id> [--reason "text"]
   python3 manage-candidates.py <topic_id|topic_name> --show <candidate-id>
   python3 manage-candidates.py <topic_id|topic_name> --status
+  python3 manage-candidates.py <topic_id|topic_name> --validate
 
 Environment variables:
   OPENCLAW_AGENTS   path to ~/.openclaw/agents/
@@ -38,23 +44,35 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+# ---------------------------------------------------------------------------
+# PyYAML is a hard requirement — no fallback (Fix A2)
+# ---------------------------------------------------------------------------
 try:
     import yaml
 except ImportError:
-    # Minimal YAML fallback — enough for our simple schema
-    yaml = None  # type: ignore
+    print(
+        "ERROR: PyYAML is required but not installed.\n"
+        "  pip install 'pyyaml>=6.0'\n"
+        "  or: pip install -r requirements.txt",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+SCHEMA_VERSION = 1
 
 DEFAULT_AGENTS_BASE = Path.home() / ".openclaw" / "agents"
 
-
 # ---------------------------------------------------------------------------
-# High-risk fact types that require human approval before L2 promotion
+# Type sets
 # ---------------------------------------------------------------------------
 
 HIGH_RISK_TYPES = {
     "architecture_decision",
     "process_rule",
     "constraint",
+    "agent_policy",
+    "security_note",
+    "rejected_approach",
 }
 
 AUTO_PROMOTE_TYPES = {
@@ -65,13 +83,52 @@ AUTO_PROMOTE_TYPES = {
     "resolved_issue",
 }
 
+VALID_TYPES = HIGH_RISK_TYPES | AUTO_PROMOTE_TYPES
+
+VALID_CONFIDENCE = {"low", "medium", "high"}
+VALID_RISK = {"low", "medium", "high"}
+VALID_STATUS = {
+    "candidate", "auto-promoted", "needs-approval",
+    "approved", "rejected", "duplicate", "obsolete",
+}
 
 # ---------------------------------------------------------------------------
-# Candidate schema helpers
+# High-risk keyword scan — blocks auto-promotion regardless of type (Fix A1)
+# ---------------------------------------------------------------------------
+
+HIGH_RISK_KEYWORDS = {
+    "architecture", "canonical", "source of truth",
+    "deprecated", "deprecate", "suspended",
+    "security", "secret", "credential", "token", "key",
+    "billing", "deployment", "production",
+    "permission", "agent policy",
+    "merge", "release", "auto-merge",
+    "human approval",
+    "password", "private", "auth",
+    "delete", "drop", "destroy", "wipe", "truncate",
+    "prod", "live",
+    "gdpr", "pii", "personal data", "compliance", "legal",
+}
+
+_KW_PATTERN = re.compile(
+    r"\b(" + "|".join(re.escape(kw) for kw in HIGH_RISK_KEYWORDS) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def contains_high_risk_keyword(text: str) -> str | None:
+    """Return the first matched keyword, or None."""
+    m = _KW_PATTERN.search(text)
+    return m.group(0) if m else None
+
+
+# ---------------------------------------------------------------------------
+# Schema v1 helpers
 # ---------------------------------------------------------------------------
 
 def candidate_id() -> str:
-    return "CAND-" + str(uuid.uuid4())[:8].upper()
+    today = datetime.now(timezone.utc).strftime("%Y%m%d")
+    return f"CAND-{today}-{str(uuid.uuid4())[:8].upper()}"
 
 
 def candidates_file(memory_dir: Path, topic_id: str) -> Path:
@@ -84,53 +141,258 @@ def load_candidates(path: Path) -> list[dict]:
     if not path.exists():
         return []
     text = path.read_text(encoding="utf-8")
-    if yaml:
-        return yaml.safe_load(text) or []
-    # Minimal fallback: return raw text wrapped (not parsed)
-    return []
+    return yaml.safe_load(text) or []
 
 
 def save_candidates(path: Path, candidates: list[dict]) -> None:
-    if yaml:
-        path.write_text(yaml.dump(candidates, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    else:
-        # Fallback: write as plain structured text
-        lines = []
-        for c in candidates:
-            lines.append("---")
-            for k, v in c.items():
-                lines.append(f"{k}: {v!r}")
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    path.write_text(
+        yaml.dump(candidates, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def make_evidence_entry(
+    kind: str,
+    ref: str,
+    locator: str,
+    topic_id: str | None = None,
+) -> dict:
+    entry: dict = {
+        "kind": kind,
+        "ref": ref,
+        "locator": locator,
+        "observed_at": now_iso(),
+    }
+    if topic_id:
+        entry["topic_id"] = topic_id
+    return entry
+
+
 def classify_type(fact: str) -> str:
     """Heuristic type classification from fact text."""
-    fact_lower = fact.lower()
-    if any(w in fact_lower for w in ("decided", "decision", "chose", "architecture", "design")):
+    f = fact.lower()
+    if any(w in f for w in ("decided", "decision", "chose", "architecture", "design")):
         return "architecture_decision"
-    if any(w in fact_lower for w in ("must", "never", "always", "required", "cannot", "constraint")):
+    if any(w in f for w in ("must", "never", "always", "required", "cannot", "constraint")):
         return "constraint"
-    if any(w in fact_lower for w in ("rule", "policy", "process", "procedure")):
+    if any(w in f for w in ("rule", "policy", "process", "procedure")):
         return "process_rule"
-    if any(w in fact_lower for w in ("prefers", "preference", "likes", "wants")):
+    if any(w in f for w in ("prefers", "preference", "likes", "wants")):
         return "preference"
-    if any(w in fact_lower for w in ("fixed", "resolved", "solved", "closed", "shipped", "released")):
+    if any(w in f for w in ("fixed", "resolved", "solved", "closed", "shipped", "released")):
         return "resolved_issue"
-    if any(w in fact_lower for w in ("is ", "are ", "was ", "were ", "has ", "have ")):
-        return "fact"
     return "fact"
+
+
+def derive_classification(fact_type: str, confidence: str, risk: str, claim: str) -> dict:
+    """Compute classification block from field values."""
+    kw = contains_high_risk_keyword(claim)
+    if fact_type in HIGH_RISK_TYPES:
+        return {
+            "auto_promotable": False,
+            "needs_human_approval": True,
+            "reason": f"Type '{fact_type}' always requires human approval.",
+        }
+    if risk == "high":
+        return {
+            "auto_promotable": False,
+            "needs_human_approval": True,
+            "reason": "Risk level is high.",
+        }
+    if confidence == "low":
+        return {
+            "auto_promotable": False,
+            "needs_human_approval": True,
+            "reason": "Confidence is low; manual review required.",
+        }
+    if kw:
+        return {
+            "auto_promotable": False,
+            "needs_human_approval": True,
+            "reason": f"Claim contains high-risk keyword: '{kw}'.",
+        }
+    return {
+        "auto_promotable": True,
+        "needs_human_approval": False,
+        "reason": f"Type '{fact_type}', risk={risk}, confidence={confidence}.",
+    }
+
+
+def build_candidate_v1(
+    *,
+    claim: str,
+    topic_id: str,
+    created_by: str,
+    evidence: list[dict],
+    fact_type: str | None = None,
+    confidence: str = "medium",
+    risk: str = "low",
+    project: str | None = None,
+    summary: str | None = None,
+    suggested_target: str | None = None,
+) -> dict:
+    """Build a schema v1 candidate dict."""
+    if fact_type is None:
+        fact_type = classify_type(claim)
+    classification = derive_classification(fact_type, confidence, risk, claim)
+    status = "candidate" if classification["auto_promotable"] else "needs-approval"
+
+    cand: dict = {
+        "schema_version": SCHEMA_VERSION,
+        "id": candidate_id(),
+        "created_at": now_iso(),
+        "created_by": created_by,
+        "topic_id": topic_id,
+        "type": fact_type,
+        "claim": claim,
+        "confidence": confidence,
+        "risk": risk,
+        "classification": classification,
+        "evidence": evidence,
+        "status": status,
+        "human_review": {
+            "required": classification["needs_human_approval"],
+            "decision": None,
+            "reviewer": None,
+            "reviewed_at": None,
+            "notes": None,
+        },
+    }
+    if project:
+        cand["project"] = project
+    if summary:
+        cand["summary"] = summary
+    if suggested_target:
+        cand["suggested_targets"] = [suggested_target]
+    return cand
+
+
+# ---------------------------------------------------------------------------
+# Schema validation (Fix A1)
+# ---------------------------------------------------------------------------
+
+def validate_candidate_v1(c: dict) -> list[str]:
+    """Return list of validation errors; empty list means valid."""
+    errors: list[str] = []
+    if c.get("schema_version") != 1:
+        errors.append("schema_version must be 1")
+    for field in ("id", "created_at", "created_by", "type", "claim",
+                  "confidence", "risk", "classification", "evidence", "status"):
+        if not c.get(field):
+            errors.append(f"required field missing or empty: {field}")
+    if c.get("type") and c["type"] not in VALID_TYPES:
+        errors.append(f"unknown type: {c['type']!r}")
+    if c.get("confidence") and c["confidence"] not in VALID_CONFIDENCE:
+        errors.append(f"confidence must be one of {VALID_CONFIDENCE}")
+    if c.get("risk") and c["risk"] not in VALID_RISK:
+        errors.append(f"risk must be one of {VALID_RISK}")
+    if c.get("status") and c["status"] not in VALID_STATUS:
+        errors.append(f"status must be one of {VALID_STATUS}")
+    if isinstance(c.get("evidence"), list) and len(c["evidence"]) == 0:
+        errors.append("evidence list must be non-empty")
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# Auto-promotion gate (Fix A1)
+# ---------------------------------------------------------------------------
+
+def can_auto_promote(c: dict) -> tuple[bool, str]:
+    """
+    Return (True, "") if the candidate passes all promotion gates.
+    Return (False, reason) otherwise.
+    """
+    if c.get("status") != "candidate":
+        return False, f"status is '{c.get('status')}', expected 'candidate'"
+
+    errors = validate_candidate_v1(c)
+    if errors:
+        return False, "schema validation failed: " + "; ".join(errors)
+
+    if c["type"] not in AUTO_PROMOTE_TYPES:
+        return False, f"type '{c['type']}' is never auto-promotable"
+
+    if c["risk"] == "high":
+        return False, "risk is high"
+
+    if c["confidence"] == "low":
+        return False, "confidence is low"
+
+    if not c.get("evidence"):
+        return False, "evidence list is empty"
+
+    kw = contains_high_risk_keyword(str(c.get("claim", "")))
+    if kw:
+        return False, f"claim contains high-risk keyword: '{kw}'"
+
+    classification = c.get("classification", {})
+    if not classification.get("auto_promotable", False):
+        return False, classification.get("reason", "classification.auto_promotable is false")
+
+    return True, ""
+
+
+# ---------------------------------------------------------------------------
+# Schema v0 migration
+# ---------------------------------------------------------------------------
+
+def migrate_legacy(c: dict) -> dict:
+    """Upgrade a schema_version 0 (or missing) candidate to v1 in-place."""
+    if c.get("schema_version") == 1:
+        return c
+    c["schema_version"] = 1
+    c.setdefault("confidence", "medium")
+    c.setdefault("risk", "medium")
+    c.setdefault("evidence", [{"kind": "manual", "ref": "legacy", "locator": ""}])
+    c.setdefault("classification", {
+        "auto_promotable": False,
+        "needs_human_approval": True,
+        "reason": "Migrated from schema v0; manual review required.",
+    })
+    c.setdefault("human_review", {
+        "required": True,
+        "decision": None,
+        "reviewer": None,
+        "reviewed_at": None,
+        "notes": None,
+    })
+    # Force needs-approval unless already in a terminal state
+    terminal = {"auto-promoted", "approved", "rejected", "duplicate", "obsolete"}
+    if c.get("status") not in terminal:
+        c["status"] = "needs-approval"
+    return c
+
+
+def load_and_migrate(path: Path) -> list[dict]:
+    candidates = load_candidates(path)
+    migrated = [migrate_legacy(c) for c in candidates]
+    return migrated
 
 
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
 
-def cmd_add(topic_id: str, facts_source: str, memory_dir: Path, session_id: str) -> None:
-    """Read facts from file or stdin, create candidate entries."""
+def cmd_add(
+    topic_id: str,
+    facts_source: str,
+    memory_dir: Path,
+    session_id: str,
+    *,
+    source_kind: str,
+    source_ref: str,
+    locator: str,
+    confidence: str,
+    risk: str,
+    project: str | None,
+    summary: str | None,
+    suggested_target: str | None,
+) -> None:
+    """Read facts from file or stdin, create v1 candidate entries."""
     if facts_source == "-":
         lines = sys.stdin.read().splitlines()
     else:
@@ -141,33 +403,36 @@ def cmd_add(topic_id: str, facts_source: str, memory_dir: Path, session_id: str)
         print("ERROR: no bullet facts found (lines must start with '- ')", file=sys.stderr)
         sys.exit(1)
 
+    evidence = [make_evidence_entry(source_kind, source_ref, locator, topic_id)]
     cf = candidates_file(memory_dir, topic_id)
-    existing = load_candidates(cf)
+    existing = load_and_migrate(cf)
 
     added = 0
     for fact in facts:
-        fact_type = classify_type(fact)
-        c = {
-            "id": candidate_id(),
-            "created_at": now_iso(),
-            "created_by": session_id,
-            "topic_id": topic_id,
-            "type": fact_type,
-            "claim": fact,
-            "status": "needs-approval" if fact_type in HIGH_RISK_TYPES else "candidate",
-        }
-        existing.append(c)
+        cand = build_candidate_v1(
+            claim=fact,
+            topic_id=topic_id,
+            created_by=session_id,
+            evidence=evidence,
+            confidence=confidence,
+            risk=risk,
+            project=project,
+            summary=summary,
+            suggested_target=suggested_target,
+        )
+        existing.append(cand)
         added += 1
-        print(f"  {c['id']} [{fact_type}] {fact[:80]}")
+        gate_ok, gate_reason = can_auto_promote(cand)
+        gate_label = "AUTO" if gate_ok else f"REVIEW ({gate_reason})"
+        print(f"  {cand['id']}  [{cand['type']}]  [{gate_label}]  {fact[:72]}")
 
     save_candidates(cf, existing)
-    print(f"\nAdded {added} candidates to {cf}")
+    print(f"\nAdded {added} candidates → {cf}")
 
 
 def cmd_list(topic_id: str, memory_dir: Path) -> None:
-    """List all candidates with status."""
     cf = candidates_file(memory_dir, topic_id)
-    candidates = load_candidates(cf)
+    candidates = load_and_migrate(cf)
     if not candidates:
         print(f"No candidates for topic {topic_id}")
         return
@@ -178,18 +443,19 @@ def cmd_list(topic_id: str, memory_dir: Path) -> None:
         by_status.setdefault(s, []).append(c)
 
     print(f"CANDIDATES  [topic:{topic_id}]  total:{len(candidates)}")
-    print("=" * 60)
+    print("=" * 70)
     for status, items in sorted(by_status.items()):
         print(f"\n[{status.upper()}]  ({len(items)})")
         for c in items:
-            claim = str(c.get("claim", ""))[:72]
-            print(f"  {c['id']}  [{c.get('type','?')}]  {claim}")
+            claim = str(c.get("claim", ""))[:68]
+            conf = c.get("confidence", "?")
+            risk = c.get("risk", "?")
+            print(f"  {c['id']}  [{c.get('type','?')}]  conf:{conf}  risk:{risk}  {claim}")
 
 
 def cmd_status(topic_id: str, memory_dir: Path) -> None:
-    """Summary stats."""
     cf = candidates_file(memory_dir, topic_id)
-    candidates = load_candidates(cf)
+    candidates = load_and_migrate(cf)
     counts: dict[str, int] = {}
     for c in candidates:
         s = c.get("status", "?")
@@ -201,39 +467,54 @@ def cmd_status(topic_id: str, memory_dir: Path) -> None:
     print(f"  File: {cf}")
 
 
-def cmd_promote_auto(topic_id: str, memory_dir: Path, agents_base: Path) -> None:
-    """Auto-promote candidates that meet criteria → write to L2 memory."""
+def cmd_promote_auto(topic_id: str, memory_dir: Path, agents_base: Path, dry_run: bool = False) -> None:
+    """Auto-promote candidates that pass all gates → write to L2 memory."""
     cf = candidates_file(memory_dir, topic_id)
-    candidates = load_candidates(cf)
+    candidates = load_and_migrate(cf)
 
-    to_promote = [
-        c for c in candidates
-        if c.get("status") == "candidate" and c.get("type") in AUTO_PROMOTE_TYPES
-    ]
-    if not to_promote:
-        print(f"No auto-promotable candidates (status=candidate, type in {AUTO_PROMOTE_TYPES})")
+    promotable = []
+    blocked = []
+    for c in candidates:
+        ok, reason = can_auto_promote(c)
+        if ok:
+            promotable.append(c)
+        elif c.get("status") == "candidate":
+            blocked.append((c, reason))
+
+    if blocked:
+        print(f"BLOCKED ({len(blocked)} candidates):")
+        for c, reason in blocked:
+            print(f"  {c['id']}  [{c.get('type','?')}]  {reason}")
+
+    if not promotable:
+        print(f"\nNothing to auto-promote.")
         return
 
-    # Write facts to L2 via archive-batch-v2
+    print(f"\nAUTO-PROMOTE ({len(promotable)} candidates):")
+    for c in promotable:
+        print(f"  {c['id']}  [{c.get('type','?')}]  {str(c.get('claim',''))[:72]}")
+
+    if dry_run:
+        print("\n[dry-run] No changes written.")
+        return
+
     ab = _import_archive_batch()
     session_id = f"promote-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
-    facts = [str(c["claim"]) for c in to_promote]
+    facts = [str(c["claim"]) for c in promotable]
     memory_file = memory_dir / f"topic-{topic_id}.md"
 
-    # Call write_batch_to_memory directly
     existing_content = memory_file.read_text(encoding="utf-8") if memory_file.exists() else ""
     existing_bullets = ab.extract_existing_bullets(existing_content)
     written = ab.write_batch_to_memory(
         memory_file=memory_file,
         topic_id=topic_id,
-        batch_n=-1,  # promotion batch
+        batch_n=-1,
         session_id=session_id,
         facts=facts,
         existing_bullets=existing_bullets,
     )
 
-    # Update statuses
-    promoted_ids = {c["id"] for c in to_promote}
+    promoted_ids = {c["id"] for c in promotable}
     for c in candidates:
         if c["id"] in promoted_ids:
             c["status"] = "auto-promoted"
@@ -241,17 +522,30 @@ def cmd_promote_auto(topic_id: str, memory_dir: Path, agents_base: Path) -> None
             c["promoted_by"] = session_id
 
     save_candidates(cf, candidates)
-    print(f"Auto-promoted {len(to_promote)} candidates → {written} facts written to {memory_file}")
+    print(f"\nAuto-promoted {len(promotable)} → {written} facts written to {memory_file}")
 
 
-def cmd_approve(topic_id: str, cand_id: str, memory_dir: Path, agents_base: Path) -> None:
+def cmd_approve(
+    topic_id: str,
+    cand_id: str,
+    memory_dir: Path,
+    agents_base: Path,
+    reviewer: str | None = None,
+) -> None:
     """Manually approve a candidate → write to L2."""
     cf = candidates_file(memory_dir, topic_id)
-    candidates = load_candidates(cf)
+    candidates = load_and_migrate(cf)
 
     target = next((c for c in candidates if c.get("id") == cand_id), None)
     if not target:
         print(f"ERROR: candidate {cand_id} not found", file=sys.stderr)
+        sys.exit(1)
+
+    errors = validate_candidate_v1(target)
+    if errors:
+        print(f"ERROR: candidate fails schema validation:", file=sys.stderr)
+        for e in errors:
+            print(f"  - {e}", file=sys.stderr)
         sys.exit(1)
 
     ab = _import_archive_batch()
@@ -270,36 +564,79 @@ def cmd_approve(topic_id: str, cand_id: str, memory_dir: Path, agents_base: Path
 
     target["status"] = "approved"
     target["approved_at"] = now_iso()
+    if reviewer:
+        target["approved_by"] = reviewer
+    target.setdefault("human_review", {})
+    target["human_review"]["decision"] = "approved"
+    target["human_review"]["reviewer"] = reviewer
+    target["human_review"]["reviewed_at"] = now_iso()
     save_candidates(cf, candidates)
     print(f"Approved {cand_id} → written to {memory_file}")
 
 
-def cmd_reject(topic_id: str, cand_id: str, memory_dir: Path) -> None:
-    """Mark a candidate as rejected."""
+def cmd_reject(
+    topic_id: str,
+    cand_id: str,
+    memory_dir: Path,
+    reason: str | None = None,
+    reviewer: str | None = None,
+) -> None:
     cf = candidates_file(memory_dir, topic_id)
-    candidates = load_candidates(cf)
+    candidates = load_and_migrate(cf)
     target = next((c for c in candidates if c.get("id") == cand_id), None)
     if not target:
         print(f"ERROR: candidate {cand_id} not found", file=sys.stderr)
         sys.exit(1)
     target["status"] = "rejected"
     target["rejected_at"] = now_iso()
+    if reason:
+        target["rejected_reason"] = reason
+    if reviewer:
+        target["rejected_by"] = reviewer
+    target.setdefault("human_review", {})
+    target["human_review"]["decision"] = "rejected"
+    target["human_review"]["reviewer"] = reviewer
+    target["human_review"]["reviewed_at"] = now_iso()
+    target["human_review"]["notes"] = reason
     save_candidates(cf, candidates)
     print(f"Rejected {cand_id}: {str(target.get('claim',''))[:80]}")
 
 
 def cmd_show(topic_id: str, cand_id: str, memory_dir: Path) -> None:
     cf = candidates_file(memory_dir, topic_id)
-    candidates = load_candidates(cf)
+    candidates = load_and_migrate(cf)
     target = next((c for c in candidates if c.get("id") == cand_id), None)
     if not target:
         print(f"ERROR: candidate {cand_id} not found", file=sys.stderr)
         sys.exit(1)
-    if yaml:
-        print(yaml.dump(target, allow_unicode=True, sort_keys=False))
+    print(yaml.dump(target, allow_unicode=True, sort_keys=False))
+
+    ok, reason = can_auto_promote(target)
+    if ok:
+        print("AUTO-PROMOTION GATE: ✓ PASS")
     else:
-        for k, v in target.items():
-            print(f"{k}: {v}")
+        print(f"AUTO-PROMOTION GATE: ✗ BLOCKED — {reason}")
+
+
+def cmd_validate(topic_id: str, memory_dir: Path) -> int:
+    """Validate all candidates in the file; return exit code."""
+    cf = candidates_file(memory_dir, topic_id)
+    candidates = load_candidates(cf)
+    total = len(candidates)
+    errors_found = 0
+    for c in candidates:
+        errs = validate_candidate_v1(c)
+        if errs:
+            errors_found += 1
+            print(f"INVALID  {c.get('id','?')}:")
+            for e in errs:
+                print(f"  - {e}")
+    if errors_found == 0:
+        print(f"All {total} candidates valid (schema v1).")
+        return 0
+    else:
+        print(f"\n{errors_found}/{total} candidates have validation errors.")
+        return 1
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +657,7 @@ def _import_archive_batch():
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="L1 Candidate Knowledge manager — intermediate layer between extraction and L2 memory."
+        description="L1 Candidate Knowledge manager (schema v1) — see docs/CANDIDATE_SCHEMA.md"
     )
     parser.add_argument("topic", help="Topic ID (numeric) or topic name")
 
@@ -335,6 +672,32 @@ def main() -> int:
                        help="Manually approve candidate → write to L2")
     group.add_argument("--reject", metavar="CANDIDATE_ID", help="Reject a candidate")
     group.add_argument("--show", metavar="CANDIDATE_ID", help="Show full candidate details")
+    group.add_argument("--validate", action="store_true",
+                       help="Validate all candidates against schema v1")
+
+    # Provenance flags for --add (Fix A1)
+    parser.add_argument("--source-kind", default="session_history",
+                        help="Evidence kind: session_history|repo_doc|pr|review|pyrogram|memory_md|manual")
+    parser.add_argument("--source-ref", default="",
+                        help="Human-readable evidence reference (e.g. 'batch 12, message 47')")
+    parser.add_argument("--locator", default="",
+                        help="Machine-usable locator (e.g. 'batch:12:msg:47')")
+    parser.add_argument("--confidence", default="medium", choices=["low", "medium", "high"],
+                        help="Confidence level (default: medium)")
+    parser.add_argument("--risk", default="low", choices=["low", "medium", "high"],
+                        help="Risk level (default: low)")
+    parser.add_argument("--project", default=None, help="Project name")
+    parser.add_argument("--summary", default=None, help="Human-readable context for reviewers")
+    parser.add_argument("--suggested-target", default=None,
+                        help="Target memory file path for promotion")
+
+    # Approve/reject extras
+    parser.add_argument("--reviewer", default=None, help="Reviewer name/ID (for --approve/--reject)")
+    parser.add_argument("--reason", default=None, help="Rejection reason (for --reject)")
+
+    # Promote flags
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Show what would be promoted without writing")
 
     parser.add_argument("--session-id", default=None, help="Session ID for traceability")
     parser.add_argument("--memory-dir", type=Path,
@@ -343,7 +706,7 @@ def main() -> int:
     parser.add_argument("--agents-base", type=Path, default=DEFAULT_AGENTS_BASE)
     args = parser.parse_args()
 
-    # Resolve topic name
+    # Resolve topic name → ID
     ab = _import_archive_batch()
     topic_id = ab.resolve_topic_id(args.topic, args.agents_base)
 
@@ -351,19 +714,31 @@ def main() -> int:
     memory_dir = args.memory_dir
 
     if args.add:
-        cmd_add(topic_id, args.add, memory_dir, session_id)
+        cmd_add(
+            topic_id, args.add, memory_dir, session_id,
+            source_kind=args.source_kind,
+            source_ref=args.source_ref,
+            locator=args.locator,
+            confidence=args.confidence,
+            risk=args.risk,
+            project=args.project,
+            summary=args.summary,
+            suggested_target=args.suggested_target,
+        )
     elif args.list:
         cmd_list(topic_id, memory_dir)
     elif args.status:
         cmd_status(topic_id, memory_dir)
     elif args.promote_auto:
-        cmd_promote_auto(topic_id, memory_dir, args.agents_base)
+        cmd_promote_auto(topic_id, memory_dir, args.agents_base, dry_run=args.dry_run)
     elif args.approve:
-        cmd_approve(topic_id, args.approve, memory_dir, args.agents_base)
+        cmd_approve(topic_id, args.approve, memory_dir, args.agents_base, reviewer=args.reviewer)
     elif args.reject:
-        cmd_reject(topic_id, args.reject, memory_dir)
+        cmd_reject(topic_id, args.reject, memory_dir, reason=args.reason, reviewer=args.reviewer)
     elif args.show:
         cmd_show(topic_id, args.show, memory_dir)
+    elif args.validate:
+        return cmd_validate(topic_id, memory_dir)
 
     return 0
 
