@@ -69,23 +69,101 @@ Extend `archive-batch-v2.py` with a **read-before-write** Pyrogram step:
 
 **Status:** drafted, pending commit.
 
-## Phase 3 — Candidate Knowledge Pipeline
+## Phase 3 — Semantic Dedup / Compaction
 
-- [ ] Define YAML candidate schema.
-- [ ] Implement candidate validator.
-- [ ] Implement bounded extractor from selected sources.
-- [ ] Implement low-risk promotion.
-- [ ] Implement pending approval report.
+> Status: **planned**
 
-## Phase 4 — Pilot on olcRTC
+LLM-based compaction pass over `memory/topic-<id>.md`:
 
-- [ ] Apply template to olcRTC in a separate controlled step.
-- [ ] Run limited extraction on allowed topics.
-- [ ] Produce first migration report.
-- [ ] Validate handoff flow: task → implementation → review → memory delta.
+- Identify semantically duplicate facts (paraphrases of the same claim)
+- Merge contradicting entries into a single canonical statement
+- Remove obsolete entries (superseded by newer facts)
+- Preserve audit trail in L0 raw archive (see Phase 3.5)
+- Output: compacted `topic-<id>.md` with fewer, higher-quality bullets
+- Trigger: manual (`--compact`) or automatic when file exceeds N lines
 
-## Phase 5 — Portability
+### Key design decisions
+- Compaction is **non-destructive**: original facts moved to L0 raw archive before rewrite
+- LLM prompt receives full topic file + compaction policy from `MEMORY_EXTRACTION_POLICY.md`
+- Result reviewed by agent before write (no silent overwrites)
+- Session-ID for the compaction run stored in header for idempotency
 
-- [ ] Document setup for another OpenClaw instance.
-- [ ] Add sanitized example configs.
-- [ ] Decide whether to publish a GitHub remote.
+---
+
+## Phase 3.5 — L0 Raw Archive (Audit Log)
+
+> Status: **planned**
+
+Append-only audit log written BEFORE every `--write` to `topic-<id>.md`:
+
+```
+.agent/memory/raw/topic-<id>-audit.log
+```
+
+Format: one entry per archive operation, includes:
+- timestamp, session-id
+- full raw fact list (pre-compaction)
+- source metadata (session files used, Pyrogram msg-id range)
+
+**Purpose:**
+- Evidence trail for every memory write
+- Recovery source if `topic-<id>.md` gets corrupted or over-compacted
+- Input for future re-extraction passes
+
+Implementation: extend `archive-batch-v2.py --write` to emit audit entry before
+any file mutation. Audit file is never modified — only appended.
+
+---
+
+## Phase 4 — L1 Candidate Schema + L3 Knowledge Vault
+
+> Status: **planned**
+
+### 4.1 — L1 Candidate Knowledge (YAML schema + status lifecycle)
+
+Formal candidate knowledge layer between raw extraction and working memory:
+
+```yaml
+id: CAND-0001
+created_at: "2026-04-27T00:00:00+03:00"
+created_by: "infra-agent"
+project: "project-name"
+type: "architecture_decision"
+claim: "..."
+status: "auto-promoted"   # candidate | auto-promoted | approved | rejected | contradicted | obsolete
+evidence: [...]
+```
+
+Statuses managed by LLM (auto-promotion) + human approval gate for high-risk types.
+
+### 4.2 — L3 Shared Knowledge Vault (neutral, searchable wiki)
+
+Project-neutral compiled knowledge vault:
+
+```
+.agent/memory/wiki/
+```
+
+- Human-readable summaries, provenance-aware pages
+- Searchable index (markdown + optional Obsidian-compatible)
+- Populated by promoted L1 candidates
+- Not agent-specific — shared across all agents on the project
+
+Both L1 and L3 are **neutral infrastructure** — no agent-specific logic.
+
+---
+
+## Phase 5 — Agents Migration
+
+> Status: **planned** (blocked on Phase 4 completion)
+
+Migration of existing agents into the complete L0–L4 memory stack:
+
+- Bootstrap `.agent/` structure for each agent project (via `.agent-template/bootstrap.sh`)
+- Initial archive pass: populate L2 working memory from existing session history
+- Validate L1 candidate pipeline end-to-end
+- Run compaction (Phase 3) on accumulated memory files
+- Integration tests: Coder → Reviewer handoff with full memory context
+- Acceptance criterion: agent can resume work after 7+ day gap without re-asking known facts
+
+**This phase = final validation of the complete infrastructure.**
