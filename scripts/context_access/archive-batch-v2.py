@@ -410,6 +410,41 @@ def resolve_memory_file(
     raise SystemExit("ERROR: --write requires --memory-file <path> or --memory-dir <dir>")
 
 
+def write_audit_log(
+    memory_file: Path,
+    topic_id: str,
+    batch_n: int,
+    session_id: str,
+    facts: list[str],
+    source_paths: list[str] | None = None,
+) -> Path:
+    """Append-only L0 audit log entry written BEFORE any memory file mutation.
+
+    Location: <memory_dir>/raw/topic-<id>-audit.log
+    Format: JSON-lines, one entry per archive operation.
+    Never modified after write — append only.
+    """
+    import json as _json
+    audit_dir = memory_file.parent / "raw"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    audit_path = audit_dir / f"topic-{topic_id}-audit.log"
+
+    entry = {
+        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "session_id": session_id,
+        "batch_n": batch_n,
+        "topic_id": topic_id,
+        "fact_count": sum(1 for f in facts if f.strip()),
+        "facts": [f for f in facts if f.strip()],
+        "sources": [os.path.basename(p) for p in (source_paths or [])],
+    }
+    with open(audit_path, "a", encoding="utf-8") as fh:
+        fh.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+
+    print(f"L0 audit: wrote entry to {audit_path}", file=sys.stderr)
+    return audit_path
+
+
 def write_batch_to_memory(
     memory_file: Path,
     topic_id: str,
@@ -417,6 +452,7 @@ def write_batch_to_memory(
     session_id: str,
     facts: list[str],
     existing_bullets: list[tuple[str, int]],
+    source_paths: list[str] | None = None,
 ) -> int:
     """Append a new batch section to the memory file.
 
@@ -438,6 +474,16 @@ def write_batch_to_memory(
             file=sys.stderr,
         )
         return 0
+
+    # L0: write audit log BEFORE any memory mutation
+    write_audit_log(
+        memory_file=memory_file,
+        topic_id=topic_id,
+        batch_n=batch_n,
+        session_id=session_id,
+        facts=facts,
+        source_paths=source_paths,
+    )
 
     conflicts = detect_conflicts(facts, existing_bullets)
 
@@ -528,6 +574,10 @@ def main() -> int:
         "--auto-mark-done", action="store_true",
         help="Automatically --mark-done the batch after a successful --write.",
     )
+    parser.add_argument(
+        "--compact", action="store_true",
+        help="Print memory file formatted for LLM compaction (read-only, no writes).",
+    )
     parser.add_argument("--agents-base", type=Path, default=DEFAULT_AGENTS_BASE)
     parser.add_argument("--progress-dir", type=Path, default=DEFAULT_PROGRESS_DIR)
     args = parser.parse_args()
@@ -538,6 +588,24 @@ def main() -> int:
 
     pfile = progress_file(args.progress_dir, args.topic_id)
 
+
+    if args.compact:
+        memory_file = resolve_memory_file(args.memory_file, args.memory_dir, args.topic_id)
+        if not memory_file.exists():
+            raise SystemExit(f"ERROR: memory file not found: {memory_file}")
+        content = memory_file.read_text(encoding="utf-8")
+        bullet_count = sum(1 for l in content.splitlines() if l.strip().startswith("- "))
+        conflict_count = sum(1 for l in content.splitlines() if "⚠️ CONFLICT" in l)
+        print(f"COMPACT INPUT  [topic:{args.topic_id}]")
+        print(f"  Memory file  : {memory_file}")
+        print(f"  Total bullets: {bullet_count}")
+        print(f"  Conflicts    : {conflict_count}")
+        print(f"  Size         : {len(content)} chars")
+        print("=" * 60)
+        print(content)
+        print("=" * 60)
+        print("# Pipe this to LLM compaction, then write back with --write and --session-id compact-<date>")
+        return 0
 
     if args.write:
         import uuid
@@ -567,6 +635,7 @@ def main() -> int:
             session_id=session_id,
             facts=facts,
             existing_bullets=existing_bullets,
+            source_paths=paths,
         )
 
         if written > 0 and args.auto_mark_done:

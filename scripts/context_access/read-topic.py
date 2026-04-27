@@ -48,6 +48,46 @@ def find_pyrogram():
     return None  # rely on system python path
 
 
+def checkpoint_path(topic_id: str) -> Path:
+    """Path to sub-batch checkpoint file for this topic."""
+    ops_dir = Path.home() / ".openclaw/workspace/ops"
+    ops_dir.mkdir(parents=True, exist_ok=True)
+    return ops_dir / f"read-topic-checkpoint-{topic_id}.json"
+
+
+def load_checkpoint(topic_id: str) -> int | None:
+    """Return last processed message_id from checkpoint, or None."""
+    import json as _json
+    cp = checkpoint_path(topic_id)
+    if cp.exists():
+        try:
+            data = _json.loads(cp.read_text())
+            return int(data["last_message_id"])
+        except Exception:
+            return None
+    return None
+
+
+def save_checkpoint(topic_id: str, last_message_id: int, sub_batch: int) -> None:
+    """Write checkpoint after processing a sub-batch."""
+    import json as _json
+    cp = checkpoint_path(topic_id)
+    cp.write_text(_json.dumps({
+        "topic_id": topic_id,
+        "last_message_id": last_message_id,
+        "sub_batch": sub_batch,
+        "ts": __import__('datetime').datetime.now(__import__('datetime').timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }, ensure_ascii=False))
+    print(f"[read-topic] Checkpoint saved: last_message_id={last_message_id} sub_batch={sub_batch}", file=sys.stderr)
+
+
+def clear_checkpoint(topic_id: str) -> None:
+    cp = checkpoint_path(topic_id)
+    if cp.exists():
+        cp.unlink()
+        print(f"[read-topic] Checkpoint cleared for topic {topic_id}", file=sys.stderr)
+
+
 def find_session_file():
     """Locate userbot .session file."""
     explicit = os.environ.get("PYROGRAM_SESSION")
@@ -242,13 +282,37 @@ def main():
     parser.add_argument("--since-id", type=int, default=None, help="Only fetch messages after this message ID")
     parser.add_argument("--chat-id", type=str, default=None, help="Override chat_id (skip auto-discovery)")
     parser.add_argument("--batch-format", action="store_true", help="Output structured transcript for write-pipeline")
+    parser.add_argument("--sub-batch-size", type=int, default=200,
+                        help="Max messages per output sub-batch (default: 200). If more fetched, "
+                             "outputs first sub-batch and writes checkpoint for --resume.")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume from checkpoint: use last saved message ID as --since-id.")
+    parser.add_argument("--clear-checkpoint", action="store_true",
+                        help="Clear checkpoint file for this topic and exit.")
     args = parser.parse_args()
 
     # 1. resolve topic name → numeric ID
     base = agents_base()
     ab = import_archive_batch()
+
+    # Handle --clear-checkpoint early (before resolution if possible)
+    if args.clear_checkpoint:
+        # resolve first to get numeric id
+        topic_id_str_early = ab.resolve_topic_id(args.topic, base)
+        clear_checkpoint(topic_id_str_early)
+        return
+
     topic_id_str = ab.resolve_topic_id(args.topic, base)
     topic_id_int = int(topic_id_str)
+
+    # --resume: load since_id from checkpoint
+    if args.resume and args.since_id is None:
+        saved = load_checkpoint(topic_id_str)
+        if saved is not None:
+            print(f"[read-topic] Resuming from checkpoint: since_id={saved}", file=sys.stderr)
+            args.since_id = saved
+        else:
+            print("[read-topic] No checkpoint found, reading from beginning", file=sys.stderr)
 
     # 2. discover chat_id
     chat_id_str = args.chat_id or discover_chat_id(topic_id_str, base)
@@ -284,11 +348,31 @@ def main():
         )
     )
 
-    # 6. output
-    if args.batch_format:
-        print_batch_format(messages, chat_id_int, topic_id_int)
+    # 6. sub-batch split + checkpoint
+    sub = args.sub_batch_size
+    total = len(messages)
+    if total > sub:
+        # Output only the first sub-batch; checkpoint last message of that batch
+        output_msgs = messages[:sub]
+        remaining = total - sub
+        last_id = output_msgs[-1][1]  # msg_id from tuple (date, msg_id, sender, text)
+        print(
+            f"[read-topic] {total} messages fetched, outputting sub-batch 0 ({sub} msgs). "
+            f"Remaining: {remaining}. Run with --resume to continue.",
+            file=sys.stderr,
+        )
+        save_checkpoint(topic_id_str, last_id, sub_batch=0)
     else:
-        print_raw(messages, chat_id_int, topic_id_int)
+        output_msgs = messages
+        # If we had a checkpoint and finished all messages, clear it
+        if args.resume:
+            clear_checkpoint(topic_id_str)
+
+    # 7. output
+    if args.batch_format:
+        print_batch_format(output_msgs, chat_id_int, topic_id_int)
+    else:
+        print_raw(output_msgs, chat_id_int, topic_id_int)
 
 
 if __name__ == "__main__":
