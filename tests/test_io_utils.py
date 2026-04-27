@@ -16,6 +16,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -145,6 +146,69 @@ class TestAtomicAppendText(unittest.TestCase):
         target = self.tmp / "sub" / "audit.log"
         self.iu.atomic_append_text(target, "ok\n")
         self.assertEqual(target.read_text(), "ok\n")
+
+
+class TestConcurrentWrites(unittest.TestCase):
+    """Prove that concurrent atomic_append_text calls do not lose data."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.iu = _load_io_utils()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def test_concurrent_appends_no_lost_data(self):
+        """20 threads each appending a unique line — all 20 must survive."""
+        target = self.tmp / "concurrent.log"
+        n_threads = 20
+        errors: list[Exception] = []
+
+        def worker(idx: int) -> None:
+            try:
+                self.iu.atomic_append_text(target, f"thread-{idx:03d}\n")
+            except Exception as exc:  # pragma: no cover
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        self.assertEqual(errors, [], f"Worker exceptions: {errors}")
+        lines = target.read_text().splitlines()
+        self.assertEqual(
+            len(lines), n_threads,
+            f"Expected {n_threads} lines, got {len(lines)}: {lines}",
+        )
+        for i in range(n_threads):
+            self.assertIn(f"thread-{i:03d}", lines, f"thread-{i:03d} missing")
+
+    def test_concurrent_locked_path_transactions_no_lost_data(self):
+        """20 threads doing read→increment→write inside locked_path — final value must be 20."""
+        target = self.tmp / "counter.txt"
+        target.write_text("0")
+        n_threads = 20
+        errors: list[Exception] = []
+
+        def worker() -> None:
+            try:
+                with self.iu.locked_path(target):
+                    current = int(target.read_text().strip())
+                    self.iu.write_text_in_lock(target, str(current + 1))
+            except Exception as exc:  # pragma: no cover
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        self.assertEqual(errors, [], f"Worker exceptions: {errors}")
+        final = int(target.read_text().strip())
+        self.assertEqual(final, n_threads, f"Counter should be {n_threads}, got {final}")
 
 
 if __name__ == "__main__":

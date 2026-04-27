@@ -38,7 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from io_utils import atomic_write_text, atomic_append_text
+from io_utils import atomic_write_text, atomic_append_text, locked_path, write_text_in_lock
 
 DEFAULT_AGENTS_BASE = Path.home() / ".openclaw" / "agents"
 DEFAULT_PROGRESS_DIR = Path.home() / ".openclaw" / "workspace" / "ops"
@@ -293,8 +293,8 @@ def load_progress(path: Path, topic_id: str) -> dict[str, Any]:
 
 
 def save_progress(path: Path, progress: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(path, json.dumps(progress, ensure_ascii=False, indent=2) + "\n")
+    """Write progress atomically. Caller must hold locked_path(path)."""
+    write_text_in_lock(path, json.dumps(progress, ensure_ascii=False, indent=2) + "\n")
 
 
 def print_stats(topic_id: str, paths: list[str], raw_count: int, deduped_count: int, duplicate_count: int, batch_size: int, total_batches: int) -> None:
@@ -466,70 +466,73 @@ def write_batch_to_memory(
     date_str = now_utc.strftime("%Y-%m-%d")
     timestamp_str = now_utc.strftime("%Y-%m-%dT%H:%MZ")
 
-    existing_content = memory_file.read_text(encoding="utf-8") if memory_file.exists() else ""
+    with locked_path(memory_file):
+        existing_content = memory_file.read_text(encoding="utf-8") if memory_file.exists() else ""
 
-    # Idempotency guard
-    if f"session {session_id}" in existing_content:
-        print(
-            f"SKIP: session {session_id} already present in {memory_file} (idempotent)",
-            file=sys.stderr,
-        )
-        return 0
-
-    # L0: write audit log BEFORE any memory mutation
-    write_audit_log(
-        memory_file=memory_file,
-        topic_id=topic_id,
-        batch_n=batch_n,
-        session_id=session_id,
-        facts=facts,
-        source_paths=source_paths,
-    )
-
-    conflicts = detect_conflicts(facts, existing_bullets)
-
-    # Build the new section
-    section_lines: list[str] = [f"\n## [{date_str}] Batch {batch_n} \u2014 session {session_id}"]
-    fact_count = 0
-    for i, fact in enumerate(facts):
-        if not fact.strip():
-            continue
-        section_lines.append(fact)
-        fact_count += 1
-        if i in conflicts:
-            _, conflicting_line, conflict_batch = conflicts[i]
-            trimmed = conflicting_line[:80] + ("..." if len(conflicting_line) > 80 else "")
-            section_lines.append(
-                f"  - \u26a0\ufe0f CONFLICT: Batch {conflict_batch} \u0443\u043a\u0430\u0437\u044b\u0432\u0430\u043b: {trimmed}"
+        # Idempotency guard
+        if f"session {session_id}" in existing_content:
+            print(
+                f"SKIP: session {session_id} already present in {memory_file} (idempotent)",
+                file=sys.stderr,
             )
-    section_lines.append("")
-    section = "\n".join(section_lines)
+            return 0
 
-    # Build updated metadata comment
-    meta_re = re.compile(r"<!-- last-batch:.*?-->")
-    range_match = re.search(r"batches: (\d+)[\u2013\-](\d+)", existing_content)
-    first_batch = range_match.group(1) if range_match else str(batch_n)
-    new_meta = (
-        f"<!-- last-batch: {batch_n} | last-write: {timestamp_str}"
-        f" | batches: {first_batch}\u2013{batch_n} -->"
-    )
+        # L0: write audit log BEFORE any memory mutation
+        write_audit_log(
+            memory_file=memory_file,
+            topic_id=topic_id,
+            batch_n=batch_n,
+            session_id=session_id,
+            facts=facts,
+            source_paths=source_paths,
+        )
 
-    # Initialise file when empty/new
-    if not memory_file.exists() or not existing_content.strip():
-        memory_file.parent.mkdir(parents=True, exist_ok=True)
-        existing_content = f"# Memory: topic-{topic_id}\n\n"
+        # Recompute bullets from the fresh read for accurate conflict detection
+        fresh_bullets = extract_existing_bullets(existing_content)
+        conflicts = detect_conflicts(facts, fresh_bullets)
 
-    if meta_re.search(existing_content):
-        new_content = meta_re.sub(new_meta, existing_content) + section
-    else:
-        # Insert metadata after the title line
-        parts = existing_content.split("\n", 2)
-        if parts and parts[0].startswith("# Memory"):
-            new_content = parts[0] + "\n\n" + new_meta + "\n" + "\n".join(parts[1:]) + section
+        # Build the new section
+        section_lines: list[str] = [f"\n## [{date_str}] Batch {batch_n} \u2014 session {session_id}"]
+        fact_count = 0
+        for i, fact in enumerate(facts):
+            if not fact.strip():
+                continue
+            section_lines.append(fact)
+            fact_count += 1
+            if i in conflicts:
+                _, conflicting_line, conflict_batch = conflicts[i]
+                trimmed = conflicting_line[:80] + ("..." if len(conflicting_line) > 80 else "")
+                section_lines.append(
+                    f"  - \u26a0\ufe0f CONFLICT: Batch {conflict_batch} \u0443\u043a\u0430\u0437\u044b\u0432\u0430\u043b: {trimmed}"
+                )
+        section_lines.append("")
+        section = "\n".join(section_lines)
+
+        # Build updated metadata comment
+        meta_re = re.compile(r"<!-- last-batch:.*?-->")
+        range_match = re.search(r"batches: (\d+)[\u2013\-](\d+)", existing_content)
+        first_batch = range_match.group(1) if range_match else str(batch_n)
+        new_meta = (
+            f"<!-- last-batch: {batch_n} | last-write: {timestamp_str}"
+            f" | batches: {first_batch}\u2013{batch_n} -->"
+        )
+
+        # Initialise file when empty/new
+        if not memory_file.exists() or not existing_content.strip():
+            memory_file.parent.mkdir(parents=True, exist_ok=True)
+            existing_content = f"# Memory: topic-{topic_id}\n\n"
+
+        if meta_re.search(existing_content):
+            new_content = meta_re.sub(new_meta, existing_content) + section
         else:
-            new_content = new_meta + "\n" + existing_content + section
+            # Insert metadata after the title line
+            parts = existing_content.split("\n", 2)
+            if parts and parts[0].startswith("# Memory"):
+                new_content = parts[0] + "\n\n" + new_meta + "\n" + "\n".join(parts[1:]) + section
+            else:
+                new_content = new_meta + "\n" + existing_content + section
 
-    atomic_write_text(memory_file, new_content)
+        write_text_in_lock(memory_file, new_content)
 
     print(f"Written: {fact_count} facts to {memory_file} (Batch {batch_n}, session {session_id})")
     if conflicts:
@@ -661,11 +664,13 @@ def main() -> int:
         )
 
         if written > 0 and args.auto_mark_done:
-            if batch_n > progress.get("last_completed_batch", -1):
-                progress["last_completed_batch"] = batch_n
-                progress["updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-                save_progress(pfile, progress)
-                print(f"Auto-marked batch {batch_n} as done (topic:{args.topic_id})")
+            with locked_path(pfile):
+                fresh_progress = load_progress(pfile, args.topic_id)
+                if batch_n > fresh_progress.get("last_completed_batch", -1):
+                    fresh_progress["last_completed_batch"] = batch_n
+                    fresh_progress["updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                    save_progress(pfile, fresh_progress)
+                    print(f"Auto-marked batch {batch_n} as done (topic:{args.topic_id})")
 
         return 0
 
@@ -678,14 +683,15 @@ def main() -> int:
         return 0
 
     if args.mark_done is not None:
-        progress = load_progress(pfile, args.topic_id)
-        if args.mark_done > progress.get("last_completed_batch", -1):
-            progress["last_completed_batch"] = args.mark_done
-            progress["updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-            save_progress(pfile, progress)
-            print(f"Marked batch {args.mark_done} as done (topic:{args.topic_id}, v2)")
-        else:
-            print(f"Batch {args.mark_done} was already marked done (topic:{args.topic_id}, v2)")
+        with locked_path(pfile):
+            progress = load_progress(pfile, args.topic_id)
+            if args.mark_done > progress.get("last_completed_batch", -1):
+                progress["last_completed_batch"] = args.mark_done
+                progress["updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                save_progress(pfile, progress)
+                print(f"Marked batch {args.mark_done} as done (topic:{args.topic_id}, v2)")
+            else:
+                print(f"Batch {args.mark_done} was already marked done (topic:{args.topic_id}, v2)")
         return 0
 
     messages, raw_count, duplicate_count, paths = load_messages(args.topic_id, args.agents_base)
