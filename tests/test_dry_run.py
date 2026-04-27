@@ -316,7 +316,7 @@ class TestPromoteAutoDryRun(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestInferNextBatchN(unittest.TestCase):
-    """Unit tests for infer_next_batch_n — batch number inference without session files."""
+    """Unit tests for infer_next_batch_n_from_content — batch number inference."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -330,39 +330,41 @@ class TestInferNextBatchN(unittest.TestCase):
     def _pfile(self):
         return self.progress_dir / "topic-9999-v2.json"
 
-    def _mem(self, content: str) -> Path:
-        p = self.tmp / "memory" / "topic-9999.md"
-        p.parent.mkdir(exist_ok=True)
-        p.write_text(content, encoding="utf-8")
-        return p
+    def _infer(self, content: str, pfile=None, explicit_batch=None) -> int:
+        return self.ab.infer_next_batch_n_from_content(
+            content=content,
+            progress_file=pfile or self._pfile(),
+            topic_id="9999",
+            explicit_batch=explicit_batch,
+        )
 
     def test_explicit_batch_always_wins(self):
-        """--batch N overrides everything else."""
-        mem = self._mem(
+        """explicit_batch overrides memory content and progress."""
+        content = (
             "<!-- last-batch: 7 | last-write: 2026-01-01 | batches: 0-7 -->\n"
             "# Memory: topic-9999\n"
             "## [2026-01-01] Batch 7 \u2014 session s1\n- fact\n"
         )
-        n = self.ab.infer_next_batch_n(mem, self._pfile(), "9999", explicit_batch=3)
+        n = self._infer(content, explicit_batch=3)
         self.assertEqual(n, 3)
 
     def test_memory_header_no_progress(self):
         """Memory has last-batch: 3, no progress file → next batch is 4."""
-        mem = self._mem(
+        content = (
             "<!-- last-batch: 3 | last-write: 2026-01-01 | batches: 0-3 -->\n"
             "# Memory: topic-9999\n"
             "## [2026-01-01] Batch 3 \u2014 session s1\n- fact\n"
         )
-        n = self.ab.infer_next_batch_n(mem, self._pfile(), "9999")
+        n = self._infer(content)
         self.assertEqual(n, 4)
 
     def test_sections_without_header(self):
         """Memory has section Batch 5 but no <!-- last-batch --> header → next is 6."""
-        mem = self._mem(
+        content = (
             "# Memory: topic-9999\n\n"
             "## [2026-01-01] Batch 5 \u2014 session s2\n- old fact\n"
         )
-        n = self.ab.infer_next_batch_n(mem, self._pfile(), "9999")
+        n = self._infer(content)
         self.assertEqual(n, 6)
 
     def test_progress_lower_than_memory_memory_wins(self):
@@ -373,18 +375,17 @@ class TestInferNextBatchN(unittest.TestCase):
             json.dumps({"topic_id": "9999", "last_completed_batch": 1}),
             encoding="utf-8",
         )
-        mem = self._mem(
+        content = (
             "<!-- last-batch: 4 | last-write: 2026-01-01 | batches: 0-4 -->\n"
             "# Memory: topic-9999\n"
             "## [2026-01-01] Batch 4 \u2014 session s3\n- fact\n"
         )
-        n = self.ab.infer_next_batch_n(mem, pfile, "9999")
+        n = self._infer(content, pfile=pfile)
         self.assertEqual(n, 5)
 
     def test_no_memory_no_progress_returns_zero(self):
-        """Completely fresh state: no memory file, no progress → batch 0."""
-        absent = self.tmp / "memory" / "topic-9999.md"  # does not exist
-        n = self.ab.infer_next_batch_n(absent, self._pfile(), "9999")
+        """Completely fresh state: empty content, no progress → batch 0."""
+        n = self._infer(content="")
         self.assertEqual(n, 0)
 
 
@@ -459,6 +460,35 @@ class TestWriteWithoutSessions(unittest.TestCase):
             self.agents_base.exists(),
             "agents_base directory must not be created by --write mode",
         )
+
+    def test_two_sequential_writes_get_different_batch_numbers(self):
+        """Two write_batch_to_memory(batch_n=None) calls → Batch 0 and Batch 1, not two Batch 0."""
+        ab = _load("archive_batch_v2_seq", "archive-batch-v2.py")
+        mem = self.memory_dir / "topic-9999.md"
+        pfile = self.progress_dir / "topic-9999-v2.json"
+
+        ab.write_batch_to_memory(
+            memory_file=mem,
+            topic_id="9999",
+            batch_n=None,  # infer inside lock
+            session_id="seq-write-1",
+            facts=["- first write"],
+            progress_file=pfile,
+        )
+        ab.write_batch_to_memory(
+            memory_file=mem,
+            topic_id="9999",
+            batch_n=None,  # infer inside lock
+            session_id="seq-write-2",
+            facts=["- second write"],
+            progress_file=pfile,
+        )
+
+        content = mem.read_text()
+        self.assertIn("Batch 0", content, "First write must create Batch 0")
+        self.assertIn("Batch 1", content, "Second write must create Batch 1, not another Batch 0")
+        self.assertEqual(content.count("Batch 0"), 1, "Batch 0 must appear exactly once")
+        self.assertEqual(content.count("Batch 1"), 1, "Batch 1 must appear exactly once")
 
 
 if __name__ == "__main__":
