@@ -20,7 +20,7 @@
 - [x] Document MeridianA/OpenClaw runtime dependency (`docs/MERIDIANA_DEPENDENCY.md`).
 - [ ] Add lock/flood-wait handling strategy for Pyrogram userbot reads.
 - [x] Document fallback order: memory archive → OpenClaw transcripts → Telegram live read. See `docs/FALLBACK_ORDER.md`.
-- [ ] Test name resolver end-to-end in telemost topic (verify `telemost` resolves to `7301`).
+- [x] Test name resolver end-to-end in telemost topic (verify `telemost` resolves to `7301`).
 - [x] Define output contract for `memory/topic-<id>.md` (archive writer format). See `docs/MEMORY_OUTPUT_CONTRACT.md`.
 - [x] Implement archive writer: `--write` mode, idempotency, `--mark-done` integration.
 - [x] Validate: no duplicate memory entries across batches after write. (session-ID idempotency confirmed; semantic dedup → Phase 3)
