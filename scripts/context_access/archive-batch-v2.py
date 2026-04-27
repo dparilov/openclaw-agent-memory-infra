@@ -313,6 +313,182 @@ def message_preview(text: str, max_chars: int) -> str:
     return text if len(text) <= max_chars else text[:max_chars] + "\n...[truncated]"
 
 
+
+
+def read_facts(source: str) -> list[str]:
+    """Read fact lines from a file path or stdin ('-')."""
+    if source == "-":
+        raw = sys.stdin.read()
+    else:
+        raw = Path(source).read_text(encoding="utf-8", errors="replace")
+    return [line for line in raw.splitlines() if line.strip()]
+
+
+def extract_existing_bullets(content: str) -> list[tuple[str, int]]:
+    """Extract (bullet_text, batch_number) tuples from existing memory file content."""
+    bullets: list[tuple[str, int]] = []
+    current_batch = -1
+    batch_re = re.compile(r"^## \[\d{4}-\d{2}-\d{2}\] Batch (\d+)")
+    canonical_re = re.compile(r"^## Canonical facts")
+    for line in content.splitlines():
+        m = batch_re.match(line)
+        if m:
+            current_batch = int(m.group(1))
+            continue
+        if canonical_re.match(line):
+            current_batch = 0
+            continue
+        stripped = line.strip()
+        if stripped.startswith("- ") and not stripped.startswith("- \u26a0\ufe0f"):
+            bullets.append((stripped, current_batch))
+    return bullets
+
+
+def significant_words(text: str) -> set[str]:
+    stopwords = {
+        "\u044d\u0442\u043e\u0442", "\u044d\u0442\u043e\u043c", "\u044d\u0442\u0438\u043c", "\u044d\u0442\u043e\u0439",
+        "\u0447\u0435\u0440\u0435\u0437", "\u0442\u0430\u043a\u0436\u0435", "\u043a\u043e\u0433\u0434\u0430", "\u043f\u043e\u0441\u043b\u0435",
+        "\u043f\u0435\u0440\u0435\u0434", "\u043c\u0435\u0436\u0434\u0443",
+        "\u043a\u043e\u0442\u043e\u0440\u044b\u0435", "\u043a\u043e\u0442\u043e\u0440\u044b\u0439",
+        "\u043a\u043e\u0442\u043e\u0440\u043e\u0433\u043e", "\u043a\u043e\u0442\u043e\u0440\u043e\u0439",
+        "which", "their", "about", "after", "before", "where", "there",
+        "these", "those", "have", "with", "from", "that", "this", "will",
+        "been",
+        "\u0431\u044b\u043b\u0438", "\u0431\u044b\u043b\u043e", "\u0431\u0443\u0434\u0435\u0442", "\u0435\u0441\u0442\u044c",
+        "\u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0435\u0442\u0441\u044f", "\u044f\u0432\u043b\u044f\u0435\u0442\u0441\u044f",
+    }
+    words = re.findall(r"\b\w{5,}\b", text.lower())
+    return {w for w in words if w not in stopwords}
+
+
+def detect_conflicts(
+    new_facts: list[str],
+    existing_bullets: list[tuple[str, int]],
+) -> dict[int, tuple[str, str, int]]:
+    """Return dict mapping new_fact_index -> (new_fact, conflicting_line, existing_batch_n).
+
+    A conflict is flagged when 2+ significant words from a new fact also appear in an
+    existing bullet AND the lines are not near-identical AND word overlap ratio > 0.5.
+    Heuristic only — false negatives expected at Phase 1.
+    """
+    conflicts: dict[int, tuple[str, str, int]] = {}
+    for i, new_fact in enumerate(new_facts):
+        if not new_fact.strip().startswith("- "):
+            continue
+        new_words = significant_words(new_fact)
+        if len(new_words) < 2:
+            continue
+        best_match: tuple[str, int] | None = None
+        best_overlap = 0
+        for existing_line, batch_n in existing_bullets:
+            existing_words = significant_words(existing_line)
+            overlap = len(new_words & existing_words)
+            if overlap < 2 or overlap <= best_overlap:
+                continue
+            norm_new = normalize_text(new_fact.lower())
+            norm_existing = normalize_text(existing_line.lower())
+            if norm_new == norm_existing:
+                continue
+            ratio = overlap / max(len(new_words), len(existing_words), 1)
+            if ratio > 0.5:
+                best_match = (existing_line, batch_n)
+                best_overlap = overlap
+        if best_match:
+            conflicts[i] = (new_fact, best_match[0], best_match[1])
+    return conflicts
+
+
+def resolve_memory_file(
+    memory_file: "Path | None",
+    memory_dir: "Path | None",
+    topic_id: str,
+) -> Path:
+    if memory_file:
+        return memory_file
+    if memory_dir:
+        return memory_dir / f"topic-{topic_id}.md"
+    raise SystemExit("ERROR: --write requires --memory-file <path> or --memory-dir <dir>")
+
+
+def write_batch_to_memory(
+    memory_file: Path,
+    topic_id: str,
+    batch_n: int,
+    session_id: str,
+    facts: list[str],
+    existing_bullets: list[tuple[str, int]],
+) -> int:
+    """Append a new batch section to the memory file.
+
+    Idempotent: if session_id is already present, does nothing and returns 0.
+    Performs heuristic conflict detection and annotates conflicting facts.
+    Updates the <!-- last-batch: ... --> metadata comment in the file header.
+    Returns number of non-empty fact lines written.
+    """
+    now_utc = datetime.now(timezone.utc)
+    date_str = now_utc.strftime("%Y-%m-%d")
+    timestamp_str = now_utc.strftime("%Y-%m-%dT%H:%MZ")
+
+    existing_content = memory_file.read_text(encoding="utf-8") if memory_file.exists() else ""
+
+    # Idempotency guard
+    if f"session {session_id}" in existing_content:
+        print(
+            f"SKIP: session {session_id} already present in {memory_file} (idempotent)",
+            file=sys.stderr,
+        )
+        return 0
+
+    conflicts = detect_conflicts(facts, existing_bullets)
+
+    # Build the new section
+    section_lines: list[str] = [f"\n## [{date_str}] Batch {batch_n} \u2014 session {session_id}"]
+    fact_count = 0
+    for i, fact in enumerate(facts):
+        if not fact.strip():
+            continue
+        section_lines.append(fact)
+        fact_count += 1
+        if i in conflicts:
+            _, conflicting_line, conflict_batch = conflicts[i]
+            trimmed = conflicting_line[:80] + ("..." if len(conflicting_line) > 80 else "")
+            section_lines.append(
+                f"  - \u26a0\ufe0f CONFLICT: Batch {conflict_batch} \u0443\u043a\u0430\u0437\u044b\u0432\u0430\u043b: {trimmed}"
+            )
+    section_lines.append("")
+    section = "\n".join(section_lines)
+
+    # Build updated metadata comment
+    meta_re = re.compile(r"<!-- last-batch:.*?-->")
+    range_match = re.search(r"batches: (\d+)[\u2013\-](\d+)", existing_content)
+    first_batch = range_match.group(1) if range_match else str(batch_n)
+    new_meta = (
+        f"<!-- last-batch: {batch_n} | last-write: {timestamp_str}"
+        f" | batches: {first_batch}\u2013{batch_n} -->"
+    )
+
+    # Initialise file when empty/new
+    if not memory_file.exists() or not existing_content.strip():
+        memory_file.parent.mkdir(parents=True, exist_ok=True)
+        existing_content = f"# Memory: topic-{topic_id}\n\n"
+
+    if meta_re.search(existing_content):
+        new_content = meta_re.sub(new_meta, existing_content) + section
+    else:
+        # Insert metadata after the title line
+        parts = existing_content.split("\n", 2)
+        if parts and parts[0].startswith("# Memory"):
+            new_content = parts[0] + "\n\n" + new_meta + "\n" + "\n".join(parts[1:]) + section
+        else:
+            new_content = new_meta + "\n" + existing_content + section
+
+    memory_file.write_text(new_content, encoding="utf-8")
+
+    print(f"Written: {fact_count} facts to {memory_file} (Batch {batch_n}, session {session_id})")
+    if conflicts:
+        print(f"Conflicts flagged: {len(conflicts)}")
+    return fact_count
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Deduplicating archive batch reader for OpenClaw topic transcripts.",
@@ -332,14 +508,75 @@ def main() -> int:
         "--max-text", type=int, default=0,
         help="truncate message text in batch output; 0 means no truncation",
     )
+    parser.add_argument(
+        "--write", metavar="FACTS_FILE",
+        help="Append extracted facts to memory file. Path to facts file or '-' for stdin.",
+    )
+    parser.add_argument(
+        "--session-id",
+        help="Session ID for idempotency dedup. Auto-generated UUID if not provided.",
+    )
+    parser.add_argument(
+        "--memory-file", type=Path,
+        help="Explicit path to memory/<topic>.md output file.",
+    )
+    parser.add_argument(
+        "--memory-dir", type=Path,
+        help="Directory for memory files; auto-named topic-<id>.md.",
+    )
+    parser.add_argument(
+        "--auto-mark-done", action="store_true",
+        help="Automatically --mark-done the batch after a successful --write.",
+    )
     parser.add_argument("--agents-base", type=Path, default=DEFAULT_AGENTS_BASE)
     parser.add_argument("--progress-dir", type=Path, default=DEFAULT_PROGRESS_DIR)
     args = parser.parse_args()
+
 
     # Resolve topic name -> numeric id before any further processing.
     args.topic_id = resolve_topic_id(args.topic_id, args.agents_base)
 
     pfile = progress_file(args.progress_dir, args.topic_id)
+
+
+    if args.write:
+        import uuid
+        facts = read_facts(args.write)
+        if not facts:
+            print("ERROR: no facts provided (empty input)", file=sys.stderr)
+            return 1
+
+        session_id = args.session_id or str(uuid.uuid4())[:12]
+        memory_file = resolve_memory_file(args.memory_file, args.memory_dir, args.topic_id)
+
+        # Load messages to determine batch number and totals (needed for header).
+        messages, raw_count, duplicate_count, paths = load_messages(args.topic_id, args.agents_base)
+        deduped_count = len(messages)
+        total_batches = (deduped_count + args.batch_size - 1) // args.batch_size
+        progress = load_progress(pfile, args.topic_id)
+        batch_n = args.batch if args.batch is not None else int(progress.get("last_completed_batch", -1)) + 1
+
+        # Read existing memory file for conflict detection.
+        existing_content = memory_file.read_text(encoding="utf-8") if memory_file.exists() else ""
+        existing_bullets = extract_existing_bullets(existing_content)
+
+        written = write_batch_to_memory(
+            memory_file=memory_file,
+            topic_id=args.topic_id,
+            batch_n=batch_n,
+            session_id=session_id,
+            facts=facts,
+            existing_bullets=existing_bullets,
+        )
+
+        if written > 0 and args.auto_mark_done:
+            if batch_n > progress.get("last_completed_batch", -1):
+                progress["last_completed_batch"] = batch_n
+                progress["updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                save_progress(pfile, progress)
+                print(f"Auto-marked batch {batch_n} as done (topic:{args.topic_id})")
+
+        return 0
 
     if args.reset:
         if pfile.exists():

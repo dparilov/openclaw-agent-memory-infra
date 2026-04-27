@@ -22,7 +22,7 @@
 - [ ] Document fallback order: memory archive → OpenClaw transcripts → Telegram live read.
 - [ ] Test name resolver end-to-end in telemost topic (verify `telemost` resolves to `7301`).
 - [x] Define output contract for `memory/topic-<id>.md` (archive writer format). See `docs/MEMORY_OUTPUT_CONTRACT.md`.
-- [ ] Implement archive writer: `--write` mode, idempotency, `--mark-done` integration.
+- [x] Implement archive writer: `--write` mode, idempotency, `--mark-done` integration.
 - [ ] Validate: no duplicate memory entries across batches after write.
 
 ## Phase 2 — Portable Templates
