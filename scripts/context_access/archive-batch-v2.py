@@ -297,6 +297,63 @@ def save_progress(path: Path, progress: dict[str, Any]) -> None:
     write_text_in_lock(path, json.dumps(progress, ensure_ascii=False, indent=2) + "\n")
 
 
+def infer_next_batch_n_from_content(
+    content: str,
+    progress_file: "Path | None",
+    topic_id: str,
+    explicit_batch: int | None = None,
+) -> int:
+    """Infer next batch number from already-read memory content + optional progress file.
+
+    Designed to be called inside the write lock so content is always fresh.
+    """
+    if explicit_batch is not None:
+        return explicit_batch
+
+    candidates: list[int] = [-1]  # ensures result >= 0
+
+    # Source 1: progress file
+    if progress_file is not None:
+        prog = load_progress(progress_file, topic_id)
+        candidates.append(int(prog.get("last_completed_batch", -1)))
+
+    # Source 2: <!-- last-batch: N | ... --> memory header
+    m = re.search(r"last-batch:\s*(\d+)", content)
+    if m:
+        candidates.append(int(m.group(1)))
+
+    # Source 3: ## [date] Batch N — session ... section headers
+    for m in re.finditer(r"## \[.*?\] Batch (\d+)", content):
+        candidates.append(int(m.group(1)))
+
+    return max(candidates) + 1
+
+
+def infer_next_batch_n(
+    memory_file: Path,
+    progress_file: Path,
+    topic_id: str,
+    explicit_batch: int | None = None,
+) -> int:
+    """Return the next batch number to write, without reading session files.
+
+    For dry-run / display: reads memory file outside the lock.
+    For real writes, use write_batch_to_memory(batch_n=None) which calls
+    infer_next_batch_n_from_content() inside the locked transaction.
+    """
+    if explicit_batch is not None:
+        return explicit_batch
+
+    content = ""
+    if memory_file.exists():
+        try:
+            content = memory_file.read_text(encoding="utf-8")
+        except OSError:
+            pass
+
+    return infer_next_batch_n_from_content(content, progress_file, topic_id)
+
+
 def print_stats(topic_id: str, paths: list[str], raw_count: int, deduped_count: int, duplicate_count: int, batch_size: int, total_batches: int) -> None:
     print("=" * 60)
     print(f"ARCHIVE SOURCE STATS  [topic:{topic_id}]")
@@ -449,11 +506,12 @@ def write_audit_log(
 def write_batch_to_memory(
     memory_file: Path,
     topic_id: str,
-    batch_n: int,
+    batch_n: int | None,
     session_id: str,
     facts: list[str],
-    existing_bullets: list[tuple[str, int]],
+    existing_bullets: list[tuple[str, int]] | None = None,
     source_paths: list[str] | None = None,
+    progress_file: Path | None = None,
 ) -> int:
     """Append a new batch section to the memory file.
 
@@ -468,6 +526,10 @@ def write_batch_to_memory(
 
     with locked_path(memory_file):
         existing_content = memory_file.read_text(encoding="utf-8") if memory_file.exists() else ""
+
+        # Resolve batch_n inside the lock from fresh content (A5: no session file scan).
+        if batch_n is None:
+            batch_n = infer_next_batch_n_from_content(existing_content, progress_file, topic_id)
 
         # Idempotency guard
         if f"session {session_id}" in existing_content:
@@ -626,18 +688,21 @@ def main() -> int:
         session_id = args.session_id or str(uuid.uuid4())[:12]
         memory_file = resolve_memory_file(args.memory_file, args.memory_dir, args.topic_id)
 
-        # Load messages to determine batch number and totals (needed for header).
-        messages, raw_count, duplicate_count, paths = load_messages(args.topic_id, args.agents_base)
-        deduped_count = len(messages)
-        total_batches = (deduped_count + args.batch_size - 1) // args.batch_size
-        progress = load_progress(pfile, args.topic_id)
-        batch_n = args.batch if args.batch is not None else int(progress.get("last_completed_batch", -1)) + 1
+        # TODO(PR6): add --source-kind / --source-ref / --source-locator flags
+        #   so standalone --write calls can record structured audit provenance.
 
-        # Read existing memory file for conflict detection.
-        existing_content = memory_file.read_text(encoding="utf-8") if memory_file.exists() else ""
-        existing_bullets = extract_existing_bullets(existing_content)
+        # Pre-compute batch_n for dry-run display and auto-mark-done tracking.
+        # The real write resolves batch_n atomically inside the locked transaction.
+        batch_n = infer_next_batch_n(
+            memory_file=memory_file,
+            progress_file=pfile,
+            topic_id=args.topic_id,
+            explicit_batch=args.batch,
+        )
 
         if args.dry_run:
+            existing_content = memory_file.read_text(encoding="utf-8") if memory_file.exists() else ""
+            existing_bullets = extract_existing_bullets(existing_content)
             conflicts = detect_conflicts(facts, existing_bullets)
             non_empty = sum(1 for f in facts if f.strip())
             print(f"[dry-run] --write would write to : {memory_file}")
@@ -653,14 +718,15 @@ def main() -> int:
             print("[dry-run] No files written.")
             return 0
 
+        # Real write: batch_n=None → resolved atomically inside the locked transaction.
         written = write_batch_to_memory(
             memory_file=memory_file,
             topic_id=args.topic_id,
-            batch_n=batch_n,
+            batch_n=args.batch,  # None if not given → infer inside lock
             session_id=session_id,
             facts=facts,
-            existing_bullets=existing_bullets,
-            source_paths=paths,
+            source_paths=None,  # A5: --write decoupled from session files
+            progress_file=pfile,
         )
 
         if written > 0 and args.auto_mark_done:

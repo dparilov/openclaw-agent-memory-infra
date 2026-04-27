@@ -311,5 +311,185 @@ class TestPromoteAutoDryRun(unittest.TestCase):
         )
 
 
+# ---------------------------------------------------------------------------
+# infer_next_batch_n unit tests (A5)
+# ---------------------------------------------------------------------------
+
+class TestInferNextBatchN(unittest.TestCase):
+    """Unit tests for infer_next_batch_n_from_content — batch number inference."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.progress_dir = self.tmp / "progress"
+        self.progress_dir.mkdir()
+        self.ab = _load("archive_batch_v2_infer", "archive-batch-v2.py")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def _pfile(self):
+        return self.progress_dir / "topic-9999-v2.json"
+
+    def _infer(self, content: str, pfile=None, explicit_batch=None) -> int:
+        return self.ab.infer_next_batch_n_from_content(
+            content=content,
+            progress_file=pfile or self._pfile(),
+            topic_id="9999",
+            explicit_batch=explicit_batch,
+        )
+
+    def test_explicit_batch_always_wins(self):
+        """explicit_batch overrides memory content and progress."""
+        content = (
+            "<!-- last-batch: 7 | last-write: 2026-01-01 | batches: 0-7 -->\n"
+            "# Memory: topic-9999\n"
+            "## [2026-01-01] Batch 7 \u2014 session s1\n- fact\n"
+        )
+        n = self._infer(content, explicit_batch=3)
+        self.assertEqual(n, 3)
+
+    def test_memory_header_no_progress(self):
+        """Memory has last-batch: 3, no progress file → next batch is 4."""
+        content = (
+            "<!-- last-batch: 3 | last-write: 2026-01-01 | batches: 0-3 -->\n"
+            "# Memory: topic-9999\n"
+            "## [2026-01-01] Batch 3 \u2014 session s1\n- fact\n"
+        )
+        n = self._infer(content)
+        self.assertEqual(n, 4)
+
+    def test_sections_without_header(self):
+        """Memory has section Batch 5 but no <!-- last-batch --> header → next is 6."""
+        content = (
+            "# Memory: topic-9999\n\n"
+            "## [2026-01-01] Batch 5 \u2014 session s2\n- old fact\n"
+        )
+        n = self._infer(content)
+        self.assertEqual(n, 6)
+
+    def test_progress_lower_than_memory_memory_wins(self):
+        """Progress says batch 1 done, memory header says 4 → next is 5."""
+        import json
+        pfile = self._pfile()
+        pfile.write_text(
+            json.dumps({"topic_id": "9999", "last_completed_batch": 1}),
+            encoding="utf-8",
+        )
+        content = (
+            "<!-- last-batch: 4 | last-write: 2026-01-01 | batches: 0-4 -->\n"
+            "# Memory: topic-9999\n"
+            "## [2026-01-01] Batch 4 \u2014 session s3\n- fact\n"
+        )
+        n = self._infer(content, pfile=pfile)
+        self.assertEqual(n, 5)
+
+    def test_no_memory_no_progress_returns_zero(self):
+        """Completely fresh state: empty content, no progress → batch 0."""
+        n = self._infer(content="")
+        self.assertEqual(n, 0)
+
+
+# ---------------------------------------------------------------------------
+# archive-batch-v2 --write without session files (A5)
+# ---------------------------------------------------------------------------
+
+class TestWriteWithoutSessions(unittest.TestCase):
+    """Prove --write works even when agents_base contains no session files."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.memory_dir = self.tmp / "memory"
+        self.memory_dir.mkdir()
+        self.agents_base = self.tmp / "no_sessions_here"  # intentionally absent
+        self.progress_dir = self.tmp / "progress"
+        self.progress_dir.mkdir()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def _run_write(self, facts_text: str, extra_args=None) -> tuple[int, str]:
+        ab = _load("archive_batch_v2", "archive-batch-v2.py")
+        facts_file = self.tmp / "facts.txt"
+        facts_file.write_text(facts_text, encoding="utf-8")
+        argv = [
+            "archive-batch-v2.py",
+            "9999",
+            "--write", str(facts_file),
+            "--memory-dir", str(self.memory_dir),
+            "--agents-base", str(self.agents_base),
+            "--progress-dir", str(self.progress_dir),
+            "--session-id", "test-nosession",
+            "--batch", "0",
+        ]
+        if extra_args:
+            argv += extra_args
+        out = io.StringIO()
+        with patch.object(sys, "argv", argv), patch("sys.stdout", out):
+            ret = ab.main()
+        return ret, out.getvalue()
+
+    def test_write_succeeds_without_agents_base(self):
+        """--write with numeric topic_id must succeed even if agents_base doesn't exist."""
+        facts = "- fact one: system works without session files\n- fact two: A5 decoupled\n"
+        ret, _ = self._run_write(facts)
+        self.assertEqual(ret, 0)
+
+    def test_write_creates_memory_file(self):
+        """Written facts must appear in the memory file."""
+        facts = "- decoupled write: no sessions needed\n"
+        self._run_write(facts)
+        mem = self.memory_dir / "topic-9999.md"
+        self.assertTrue(mem.exists(), "Memory file must be created by --write")
+        content = mem.read_text()
+        self.assertIn("decoupled write", content)
+
+    def test_write_dry_run_without_agents_base(self):
+        """--dry-run + --write must also work without session files."""
+        facts = "- dry fact\n"
+        ret, out = self._run_write(facts, extra_args=["--dry-run"])
+        self.assertEqual(ret, 0)
+        self.assertIn("dry-run", out)
+        mem = self.memory_dir / "topic-9999.md"
+        self.assertFalse(mem.exists(), "dry-run must not create memory file")
+
+    def test_agents_base_dir_never_created(self):
+        """--write must not create or touch agents_base at all."""
+        facts = "- standalone write\n"
+        self._run_write(facts)
+        self.assertFalse(
+            self.agents_base.exists(),
+            "agents_base directory must not be created by --write mode",
+        )
+
+    def test_two_sequential_writes_get_different_batch_numbers(self):
+        """Two write_batch_to_memory(batch_n=None) calls → Batch 0 and Batch 1, not two Batch 0."""
+        ab = _load("archive_batch_v2_seq", "archive-batch-v2.py")
+        mem = self.memory_dir / "topic-9999.md"
+        pfile = self.progress_dir / "topic-9999-v2.json"
+
+        ab.write_batch_to_memory(
+            memory_file=mem,
+            topic_id="9999",
+            batch_n=None,  # infer inside lock
+            session_id="seq-write-1",
+            facts=["- first write"],
+            progress_file=pfile,
+        )
+        ab.write_batch_to_memory(
+            memory_file=mem,
+            topic_id="9999",
+            batch_n=None,  # infer inside lock
+            session_id="seq-write-2",
+            facts=["- second write"],
+            progress_file=pfile,
+        )
+
+        content = mem.read_text()
+        self.assertIn("Batch 0", content, "First write must create Batch 0")
+        self.assertIn("Batch 1", content, "Second write must create Batch 1, not another Batch 0")
+        self.assertEqual(content.count("Batch 0"), 1, "Batch 0 must appear exactly once")
+        self.assertEqual(content.count("Batch 1"), 1, "Batch 1 must appear exactly once")
+
+
 if __name__ == "__main__":
     unittest.main()
