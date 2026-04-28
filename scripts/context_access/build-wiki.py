@@ -26,51 +26,137 @@ import importlib.util
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypedDict
 
 from io_utils import atomic_write_text
 
 DEFAULT_AGENTS_BASE = Path.home() / ".openclaw" / "agents"
 
+WIKI_SCHEMA_VERSION = 2
+
 
 # ---------------------------------------------------------------------------
-# Fact extraction from memory file
+# WikiFact — structured provenance record for a single memory fact
 # ---------------------------------------------------------------------------
 
-def extract_facts(content: str) -> list[dict]:
-    """Extract clean facts from topic-<id>.md content.
+class WikiFact(TypedDict):
+    id: str               # deterministic: wiki-fact-<topic_id>-b<batch_n|unknown>-l<line_number>
+    text: str             # fact text, stripped of leading "- "
+    topic_id: str
+    source_file: str      # relative path to memory file
+    line_number: int      # 1-based line number in source_file
+    batch_n: int | None   # None when fact appears outside any batch heading
+    batch_date: str | None  # YYYY-MM-DD from batch heading, or None
+    session_id: str | None  # from "— session X" in batch heading, or None
+    is_conflict: bool     # True when line starts with "- ⚠️"
+    fact_type: str        # filled by classify_fact(); empty string until classified
 
-    Returns list of {text, batch_n, is_conflict} dicts.
-    Skips ⚠️ CONFLICT annotation lines (keeps the main fact).
+
+# ---------------------------------------------------------------------------
+# Fact parsing
+# ---------------------------------------------------------------------------
+
+_BATCH_RE = re.compile(
+    r"^## \[(\d{4}-\d{2}-\d{2})\] Batch (\d+)"
+    r"(?:\s+[—\-]+\s+session\s+(\S+))?"
+)
+_COMPACT_RE = re.compile(r"^## \[(\d{4}-\d{2}-\d{2})\] Batch -1")
+
+
+def parse_facts(
+    content: str,
+    source_file: str = "",
+    topic_id: str = "",
+) -> list[WikiFact]:
+    """Parse facts from topic-<id>.md content with full provenance metadata.
+
+    Rules:
+    - Only top-level bullet lines (starting with "- ") are facts.
+      Lines with leading whitespace (nested bullets) are skipped.
+    - Lines starting with "- ⚠️" are stored as is_conflict=True facts,
+      not skipped.
+    - Facts outside any batch heading get batch_n=None, batch_date=None,
+      session_id=None.
+    - line_number is 1-based.
     """
-    facts = []
-    current_batch = -1
-    batch_re = re.compile(r"^## \[(\d{4}-\d{2}-\d{2})\] Batch (\d+)")
-    compact_re = re.compile(r"^## \[(\d{4}-\d{2}-\d{2})\] Batch -1")  # promotion batches
+    facts: list[WikiFact] = []
+    current_batch_n: int | None = None
+    current_batch_date: str | None = None
+    current_session_id: str | None = None
 
-    for line in content.splitlines():
-        bm = batch_re.match(line)
+    for lineno, line in enumerate(content.splitlines(), start=1):
+        # Check for batch heading
+        bm = _BATCH_RE.match(line)
         if bm:
-            current_batch = int(bm.group(2))
-            continue
-        if compact_re.match(line):
-            current_batch = -1
+            current_batch_date = bm.group(1)
+            current_batch_n = int(bm.group(2))
+            current_session_id = bm.group(3) or None
             continue
 
-        stripped = line.strip()
-        if stripped.startswith("- ⚠️"):
-            continue  # skip conflict annotations
-        if stripped.startswith("- "):
-            facts.append({
-                "text": stripped,
-                "batch_n": current_batch,
-                "is_conflict": False,
-            })
+        # Compact/promotion batch heading (Batch -1)
+        if _COMPACT_RE.match(line):
+            m = _COMPACT_RE.match(line)
+            current_batch_date = m.group(1) if m else None
+            current_batch_n = None
+            current_session_id = None
+            continue
+
+        # Only top-level bullets (no leading whitespace)
+        if not line.startswith("- "):
+            continue
+
+        is_conflict = line.startswith("- \u26a0\ufe0f")  # "- ⚠️"
+
+        text = line[2:].strip()  # strip leading "- "
+        if not text:
+            continue
+
+        batch_label = str(current_batch_n) if current_batch_n is not None else "unknown"
+        fact_id = f"wiki-fact-{topic_id}-b{batch_label}-l{lineno}"
+
+        facts.append(WikiFact(
+            id=fact_id,
+            text=text,
+            topic_id=topic_id,
+            source_file=source_file,
+            line_number=lineno,
+            batch_n=current_batch_n,
+            batch_date=current_batch_date,
+            session_id=current_session_id,
+            is_conflict=is_conflict,
+            fact_type="",  # filled by caller via classify_fact()
+        ))
 
     return facts
 
+
+def extract_facts(content: str, *, include_conflicts: bool = False) -> list[dict]:
+    """Backward-compatible wrapper around parse_facts().
+
+    Returns list of {text, batch_n, is_conflict} dicts as before.
+    By default skips conflict facts (is_conflict=True) to preserve
+    pre-D1 rendering behaviour. Pass include_conflicts=True to get all.
+    """
+    raw = parse_facts(content, source_file="", topic_id="")
+    if not include_conflicts:
+        raw = [r for r in raw if not r["is_conflict"]]
+    return [
+        {
+            "text": f"- {r['text']}",  # restore "- " prefix for callers that expect it
+            "batch_n": r["batch_n"],
+            "is_conflict": r["is_conflict"],
+        }
+        for r in raw
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Fact classification
+# ---------------------------------------------------------------------------
 
 def classify_fact(text: str) -> str:
     """Classify fact into wiki section."""
@@ -89,6 +175,10 @@ def classify_fact(text: str) -> str:
         return "blockers"
     return "general"
 
+
+# ---------------------------------------------------------------------------
+# Memory header parsing
+# ---------------------------------------------------------------------------
 
 def parse_memory_header(content: str) -> dict:
     """Extract metadata from <!-- last-batch: N | last-write: TS | ... --> header."""
@@ -112,6 +202,43 @@ def topic_name_from_file(path: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Git SHA helper
+# ---------------------------------------------------------------------------
+
+def _get_git_sha(repo_dir: Path | None = None) -> str | None:
+    """Return short HEAD git SHA, or None if not in a git repo."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=str(repo_dir) if repo_dir else None,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip() or None
+    except Exception:
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Source path helper
+# ---------------------------------------------------------------------------
+
+def _display_source_path(path: "Path", memory_dir: "Path") -> str:
+    """Return a portable relative path for storing in WIKI_META / WikiFact.
+
+    Relative to memory_dir.parent so paths look like 'memory/topic-7301.md'.
+    Falls back to str(path) when path is not under memory_dir.parent.
+    """
+    try:
+        return str(path.relative_to(memory_dir.parent))
+    except ValueError:
+        return str(path)
+
+
+# ---------------------------------------------------------------------------
 # Wiki page builders
 # ---------------------------------------------------------------------------
 
@@ -119,7 +246,7 @@ def build_topic_page(topic_id: str, memory_file: Path, wiki_dir: Path, dry_run: 
     """Build wiki/topic-<id>.md from memory file. Returns stats."""
     content = memory_file.read_text(encoding="utf-8", errors="replace")
     header = parse_memory_header(content)
-    facts = extract_facts(content)
+    facts_raw = extract_facts(content)
 
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     last_write = header.get("last-write", "unknown")
@@ -127,14 +254,14 @@ def build_topic_page(topic_id: str, memory_file: Path, wiki_dir: Path, dry_run: 
 
     # Group facts by type
     by_type: dict[str, list[str]] = {}
-    for f in facts:
+    for f in facts_raw:
         t = classify_fact(f["text"])
         by_type.setdefault(t, []).append(f["text"])
 
     lines = [
         f"# {title}",
         f"",
-        f"> Topic ID: `{topic_id}` | Last memory write: `{last_write}` | Facts: {len(facts)}",
+        f"> Topic ID: `{topic_id}` | Last memory write: `{last_write}` | Facts: {len(facts_raw)}",
         f"> Wiki built: `{now_str}`",
         f"",
     ]
@@ -166,7 +293,7 @@ def build_topic_page(topic_id: str, memory_file: Path, wiki_dir: Path, dry_run: 
     return {
         "topic_id": topic_id,
         "title": title,
-        "fact_count": len(facts),
+        "fact_count": len(facts_raw),
         "last_write": last_write,
         "wiki_file": str(wiki_file),
         "by_type": {k: len(v) for k, v in by_type.items()},
@@ -313,26 +440,58 @@ def main() -> int:
 
     topic_stats = []
     all_facts_by_type: dict[str, list[dict]] = {}
+    all_wiki_facts: list[WikiFact] = []
+    per_topic_last_batch: dict[str, int | None] = {}
+    source_files_index: list[dict] = []
+
+    git_sha = _get_git_sha(repo_dir=Path(__file__).parent)
 
     for mf in memory_files:
-        # Extract topic ID from filename
-        m = re.match(r"topic-(\d+)\.md", mf.name)
+        # Extract topic ID from filename (numeric or non-numeric)
+        m = re.match(r"topic-(.+)\.md", mf.name)
         if not m:
             continue
         tid = m.group(1)
 
         try:
+            content = mf.read_text(encoding="utf-8", errors="replace")
+            header = parse_memory_header(content)
+
+            # Parse with full provenance
+            source_path = _display_source_path(mf, memory_dir)
+            wiki_facts = parse_facts(
+                content,
+                source_file=source_path,
+                topic_id=tid,
+            )
+            # Classify and attach fact_type
+            for wf in wiki_facts:
+                wf["fact_type"] = classify_fact(wf["text"])
+
+            all_wiki_facts.extend(wiki_facts)
+
+            # Determine last batch for this topic
+            batch_nums = [wf["batch_n"] for wf in wiki_facts if wf["batch_n"] is not None]
+            last_batch = max(batch_nums) if batch_nums else None
+            per_topic_last_batch[tid] = last_batch
+
+            # Build source files index entry
+            source_files_index.append({
+                "path": source_path,
+                "topic_id": tid,
+                "fact_count": len(wiki_facts),
+                "last_batch": last_batch,
+            })
+
             stats = build_topic_page(tid, mf, wiki_dir, dry_run=args.dry_run)
             topic_stats.append(stats)
 
-            # Collect for by-type pages
-            content = mf.read_text(encoding="utf-8", errors="replace")
-            facts = extract_facts(content)
-            for f in facts:
-                ft = classify_fact(f["text"])
+            # Collect for by-type pages (uses compat extract_facts output)
+            for wf in wiki_facts:
+                ft = wf["fact_type"]
                 all_facts_by_type.setdefault(ft, []).append({
                     "topic_id": tid,
-                    "text": f["text"],
+                    "text": f"- {wf['text']}",
                 })
 
             prefix = "[dry-run] " if args.dry_run else ""
@@ -344,31 +503,40 @@ def main() -> int:
     build_index(topic_stats, wiki_dir, dry_run=args.dry_run)
 
     total_facts = sum(s["fact_count"] for s in topic_stats)
+    conflict_facts = sum(1 for wf in all_wiki_facts if wf["is_conflict"])
 
     if args.dry_run:
         print(f"\n[dry-run] Would build wiki:")
-        print(f"[dry-run]   Topics:      {len(topic_stats)}")
-        print(f"[dry-run]   Total facts: {total_facts}")
-        print(f"[dry-run]   Index:       {wiki_dir / 'index.md'}")
-        print(f"[dry-run]   By-type:     {wiki_dir / 'by-type/'}")
-        print(f"[dry-run]   WIKI_META:   {wiki_dir / 'WIKI_META.json'}")
+        print(f"[dry-run]   Topics:         {len(topic_stats)}")
+        print(f"[dry-run]   Total facts:    {total_facts}")
+        print(f"[dry-run]   Conflict facts: {conflict_facts}")
+        print(f"[dry-run]   Index:          {wiki_dir / 'index.md'}")
+        print(f"[dry-run]   By-type:        {wiki_dir / 'by-type/'}")
+        print(f"[dry-run]   WIKI_META:      {wiki_dir / 'WIKI_META.json'}")
         print("[dry-run] No files written.")
         return 0
 
-    # Write WIKI_META.json
+    # Write WIKI_META.json (schema v2)
     meta = {
+        "wiki_schema_version": WIKI_SCHEMA_VERSION,
         "built_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "build_git_sha": git_sha,
         "topic_count": len(topic_stats),
         "total_facts": total_facts,
+        "conflict_facts": conflict_facts,
+        "source_files": source_files_index,
+        "per_topic_last_batch": per_topic_last_batch,
         "topics": topic_stats,
+        "facts": [dict(wf) for wf in all_wiki_facts],
     }
     atomic_write_text(wiki_dir / "WIKI_META.json", json.dumps(meta, ensure_ascii=False, indent=2))
 
     print(f"\nWiki built:")
-    print(f"  Topics:      {len(topic_stats)}")
-    print(f"  Total facts: {total_facts}")
-    print(f"  Index:       {wiki_dir / 'index.md'}")
-    print(f"  By-type:     {wiki_dir / 'by-type/'}")
+    print(f"  Topics:         {len(topic_stats)}")
+    print(f"  Total facts:    {total_facts}")
+    print(f"  Conflict facts: {conflict_facts}")
+    print(f"  Index:          {wiki_dir / 'index.md'}")
+    print(f"  By-type:        {wiki_dir / 'by-type/'}")
 
     return 0
 
