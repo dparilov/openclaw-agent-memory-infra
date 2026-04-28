@@ -389,6 +389,20 @@ enabling the next agent to resume without loss of context.
 Naming convention: `YYYY-MM-DD-HHMMSS-<slug>.md`
 _T_
 
+
+write_file "$TARGET/.agent/config.yaml" <<'_T_'
+# .agent/config.yaml — openclaw-agent-memory-infra project configuration
+# All path values support ~ expansion.
+
+# Pyrogram session file path (without .session extension)
+# pyrogram_session: ~/.openclaw/session
+
+# Directory for read-topic.py checkpoints
+# checkpoint_dir: ~/.openclaw/agents/default/checkpoints
+
+# Base directory for OpenClaw agent session files
+# agents_base: ~/.openclaw/agents
+_T_
 # ── Runbook templates ────────────────────────────────────────────────────────
 
 write_file "$TARGET/.agent/runbooks/coder-agent.md" <<'_T_'
@@ -688,6 +702,13 @@ if [[ $SMOKE_TEST -eq 1 ]]; then
     fi
   done
 
+
+  # config.yaml
+  if [[ -f "$TARGET/.agent/config.yaml" ]]; then
+    _smoke_pass ".agent/config.yaml"
+  else
+    _smoke_fail ".agent/config.yaml missing"
+  fi
   # Tool --help (4 tools; installed copy takes priority, falls back to source)
   _TOOL_DIR="$TARGET/.agent/tools/context_access"
   for _tool in read-topic.py archive-batch-v2.py manage-candidates.py build-wiki.py; do

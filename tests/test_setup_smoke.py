@@ -184,3 +184,21 @@ class TestSmokePythonCheck:
             pytest.skip("Python < 3.10 on this runner")
         result = run_setup("--test", target=tmp_path)
         assert "  PASS  Python >= 3.10" in result.stdout
+
+
+# ── config.yaml check ─────────────────────────────────────────────────────────
+
+
+class TestSmokeConfigYaml:
+    def test_config_yaml_mentioned_in_output(self, tmp_path):
+        result = run_setup("--test", target=tmp_path)
+        assert ".agent/config.yaml" in result.stdout
+
+    def test_config_yaml_not_failed_after_bootstrap(self, tmp_path):
+        result = run_setup("--test", target=tmp_path)
+        assert "FAIL  .agent/config.yaml" not in result.stdout
+
+    def test_dry_run_fails_on_missing_config_yaml(self, tmp_path):
+        result = run_setup("--dry-run", "--test", target=tmp_path)
+        assert result.returncode != 0
+        assert "FAIL  .agent/config.yaml" in result.stdout
