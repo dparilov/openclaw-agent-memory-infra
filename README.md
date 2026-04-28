@@ -34,6 +34,20 @@ L4  Canonical Docs docs/ + .agent/AGENT_CONTEXT.md  Architecture, runbooks, ADR
 
 ---
 
+## First Time? Start Here
+
+If you are setting up on a new machine or a new OpenClaw environment, verify your environment
+before running anything else:
+
+```
+docs/BOOTSTRAP_PREREQUISITES.md
+```
+
+This document can be used with any external assistant (ChatGPT, Claude web, etc.) to walk
+through prerequisites step by step and produce an explicit READY / NOT READY verdict.
+
+---
+
 ## Quick Start
 
 ```bash
