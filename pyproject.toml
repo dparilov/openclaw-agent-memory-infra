@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-m", "not e2e"]
+markers = [
+    "e2e: end-to-end tests that require live ~/.openclaw/agents/ data (deselected by default)",
+]
