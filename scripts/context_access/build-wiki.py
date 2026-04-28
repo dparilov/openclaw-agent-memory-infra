@@ -239,34 +239,77 @@ def _display_source_path(path: "Path", memory_dir: "Path") -> str:
 
 
 # ---------------------------------------------------------------------------
+# Provenance rendering
+# ---------------------------------------------------------------------------
+
+def format_provenance(fact: WikiFact) -> str:
+    """Return an italic markdown provenance tail for a rendered wiki fact.
+
+    Format (2-space indent so it nests under the bullet):
+      _Source: `<source_file>` · topic `<topic_id>` · Batch <N|unknown>
+               · <batch_date> · session `<session_id>` · line <N> [· conflict]_
+    """
+    parts: list[str] = [
+        f"`{fact['source_file']}`",
+        f"topic `{fact['topic_id']}`",
+    ]
+    if fact["batch_n"] is not None:
+        parts.append(f"Batch {fact['batch_n']}")
+    else:
+        parts.append("Batch unknown")
+    if fact["batch_date"]:
+        parts.append(fact["batch_date"])
+    if fact["session_id"]:
+        parts.append(f"session `{fact['session_id']}`")
+    parts.append(f"line {fact['line_number']}")
+    if fact["is_conflict"]:
+        parts.append("conflict")
+    return "  _Source: " + " · ".join(parts) + "_"
+
+
+# ---------------------------------------------------------------------------
 # Wiki page builders
 # ---------------------------------------------------------------------------
 
-def build_topic_page(topic_id: str, memory_file: Path, wiki_dir: Path, dry_run: bool = False) -> dict:
-    """Build wiki/topic-<id>.md from memory file. Returns stats."""
+def build_topic_page(
+    topic_id: str,
+    memory_file: Path,
+    wiki_dir: Path,
+    dry_run: bool = False,
+    wiki_facts: "list[WikiFact] | None" = None,
+) -> dict:
+    """Build wiki/topic-<id>.md from memory file with provenance. Returns stats.
+
+    If wiki_facts is provided (pre-computed by main()), uses them directly.
+    Otherwise parses the file internally (standalone / test use).
+    """
     content = memory_file.read_text(encoding="utf-8", errors="replace")
     header = parse_memory_header(content)
-    facts_raw = extract_facts(content)
+    title = topic_name_from_file(memory_file)
+
+    if wiki_facts is None:
+        wf_local = parse_facts(content, source_file=str(memory_file), topic_id=topic_id)
+        for wf in wf_local:
+            wf["fact_type"] = classify_fact(wf["text"])
+    else:
+        wf_local = wiki_facts
+
+    regular = [f for f in wf_local if not f["is_conflict"]]
+    conflicts = [f for f in wf_local if f["is_conflict"]]
 
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     last_write = header.get("last-write", "unknown")
-    title = topic_name_from_file(memory_file)
 
-    # Group facts by type
-    by_type: dict[str, list[str]] = {}
-    for f in facts_raw:
-        t = classify_fact(f["text"])
-        by_type.setdefault(t, []).append(f["text"])
-
+    conflict_note = f" | Conflicts: {len(conflicts)}" if conflicts else ""
     lines = [
         f"# {title}",
-        f"",
-        f"> Topic ID: `{topic_id}` | Last memory write: `{last_write}` | Facts: {len(facts_raw)}",
+        "",
+        f"> Topic ID: `{topic_id}` | Last memory write: `{last_write}` | Facts: {len(regular)}{conflict_note}",
         f"> Wiki built: `{now_str}`",
-        f"",
+        "",
     ]
 
-    # ordered sections
+    # Group regular facts by type
     section_order = ["decisions", "constraints", "process", "preferences", "resolved", "blockers", "general"]
     section_titles = {
         "decisions": "## Decisions & Architecture",
@@ -277,14 +320,29 @@ def build_topic_page(topic_id: str, memory_file: Path, wiki_dir: Path, dry_run: 
         "blockers": "## Blockers",
         "general": "## General Facts",
     }
+    by_type: dict[str, list[WikiFact]] = {}
+    for f in regular:
+        by_type.setdefault(f["fact_type"], []).append(f)
 
     for section in section_order:
         if section in by_type:
             lines.append(section_titles[section])
             lines.append("")
-            for fact in by_type[section]:
-                lines.append(fact)
+            for f in by_type[section]:
+                lines.append(f"- {f['text']}")
+                lines.append(format_provenance(f))
+                lines.append("")
             lines.append("")
+
+    # Conflicts section — always rendered visibly in D2
+    if conflicts:
+        lines.append("## ⚠️ Conflicts")
+        lines.append("")
+        for f in conflicts:
+            lines.append(f"- ⚠️ {f['text']}")
+            lines.append(format_provenance(f))
+            lines.append("")
+        lines.append("")
 
     wiki_file = wiki_dir / f"topic-{topic_id}.md"
     if not dry_run:
@@ -293,15 +351,23 @@ def build_topic_page(topic_id: str, memory_file: Path, wiki_dir: Path, dry_run: 
     return {
         "topic_id": topic_id,
         "title": title,
-        "fact_count": len(facts_raw),
+        "fact_count": len(regular),
+        "conflict_count": len(conflicts),
         "last_write": last_write,
         "wiki_file": str(wiki_file),
         "by_type": {k: len(v) for k, v in by_type.items()},
     }
 
 
-def build_by_type_pages(all_facts_by_type: dict[str, list[dict]], wiki_dir: Path, dry_run: bool = False) -> None:
-    """Build wiki/by-type/<type>.md pages aggregating facts across all topics."""
+def build_by_type_pages(
+    all_facts_by_type: "dict[str, list[WikiFact]]",
+    wiki_dir: Path,
+    dry_run: bool = False,
+) -> None:
+    """Build wiki/by-type/<type>.md pages aggregating WikiFacts across all topics.
+
+    Each rendered fact includes a provenance tail (source, topic, batch, date, session).
+    """
     type_dir = wiki_dir / "by-type"
     if not dry_run:
         type_dir.mkdir(exist_ok=True)
@@ -318,23 +384,26 @@ def build_by_type_pages(all_facts_by_type: dict[str, list[dict]], wiki_dir: Path
 
     for fact_type, entries in all_facts_by_type.items():
         title = section_titles.get(fact_type, fact_type.title())
+        topic_count = len({e["topic_id"] for e in entries})
         lines = [
             f"# {title}",
-            f"",
-            f"> {len(entries)} facts across {len({e['topic_id'] for e in entries})} topics",
-            f"",
+            "",
+            f"> {len(entries)} facts across {topic_count} topic(s)",
+            "",
         ]
 
         # Group by topic
-        by_topic: dict[str, list[str]] = {}
+        by_topic: dict[str, list[WikiFact]] = {}
         for e in entries:
-            by_topic.setdefault(e["topic_id"], []).append(e["text"])
+            by_topic.setdefault(e["topic_id"], []).append(e)
 
         for tid, tfacts in sorted(by_topic.items()):
             lines.append(f"## Topic {tid}")
             lines.append("")
             for f in tfacts:
-                lines.append(f)
+                lines.append(f"- {f['text']}")
+                lines.append(format_provenance(f))
+                lines.append("")
             lines.append("")
 
         if not dry_run:
@@ -483,19 +552,18 @@ def main() -> int:
                 "last_batch": last_batch,
             })
 
-            stats = build_topic_page(tid, mf, wiki_dir, dry_run=args.dry_run)
+            stats = build_topic_page(tid, mf, wiki_dir, dry_run=args.dry_run, wiki_facts=wiki_facts)
             topic_stats.append(stats)
 
-            # Collect for by-type pages (uses compat extract_facts output)
+            # Collect full WikiFacts for by-type provenance rendering
             for wf in wiki_facts:
                 ft = wf["fact_type"]
-                all_facts_by_type.setdefault(ft, []).append({
-                    "topic_id": tid,
-                    "text": f"- {wf['text']}",
-                })
+                all_facts_by_type.setdefault(ft, []).append(wf)
 
             prefix = "[dry-run] " if args.dry_run else ""
-            print(f"  {prefix}topic-{tid}: {stats['fact_count']} facts → {stats['wiki_file']}")
+            n_conflicts = stats.get("conflict_count", 0)
+            conflict_note = f" ({n_conflicts} conflicts)" if n_conflicts else ""
+            print(f"  {prefix}topic-{tid}: {stats['fact_count']} facts{conflict_note} → {stats['wiki_file']}")
         except Exception as e:
             print(f"  ERROR topic-{tid}: {e}", file=sys.stderr)
 
