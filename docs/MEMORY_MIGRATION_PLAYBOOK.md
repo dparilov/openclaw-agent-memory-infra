@@ -249,8 +249,8 @@ Post the report to the infra topic and notify the human.
 |-------|--------|-----------|
 | M0 | Source inventory | Review required |
 | M1 | Migration map | Approval required before M2 |
-| M2 | Archive batches | Approval of M1 map sufficient |
-| M3 | Extract candidates | No additional gate |
+| M2 | Read / preview source batches | Approval of M1 map sufficient |
+| M3 | Extract facts and create candidates | No additional gate |
 | M4 | Promote candidates | High-risk: explicit approval per candidate |
 | M5 | Build + validate wiki | Errors: stop and report |
 | M6 | Write migration report | No gate — always write |
