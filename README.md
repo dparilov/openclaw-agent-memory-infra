@@ -57,6 +57,10 @@ python3 scripts/context_access/archive-batch-v2.py 7301 \
 # 5. Build wiki
 python3 scripts/context_access/build-wiki.py \
   --memory-dir /path/to/your/project/.agent/memory
+
+# 6. Validate wiki integrity
+python3 scripts/context_access/validate-wiki.py \
+  --memory-dir /path/to/your/project/.agent/memory
 ```
 
 **Requirements:** Python 3.10+, `pyyaml`, `pyrogram` — see [docs/deployment.md](docs/deployment.md) for full setup including CLI requirements for skill commands.
@@ -212,6 +216,20 @@ python3 build-wiki.py --memory-dir .agent/memory --topic telemost
 └── WIKI_META.json        Build metadata
 ```
 
+### `scripts/context_access/validate-wiki.py`
+
+Pre-live integrity checker for the L3 Knowledge Vault.
+
+```bash
+python3 validate-wiki.py --memory-dir .agent/memory
+python3 validate-wiki.py --memory-dir .agent/memory --strict
+python3 validate-wiki.py --memory-dir .agent/memory --json
+python3 validate-wiki.py --memory-dir .agent/memory --write-report .agent/memory/reports/wiki-audit.md
+```
+
+Checks WIKI_META schema, source file existence, source sha256/mtime freshness,
+fact provenance, line numbers, topic pages, by-type pages, and conflict counts.
+
 ---
 
 ## Skills
@@ -246,6 +264,7 @@ See `docs/SKILL_VOCABULARY.md` for decision guide on when to call each skill.
 │   └── memory/
 ├── docs/
 │   ├── ROADMAP.md              Implementation phases (1–5)
+│   ├── PRE_LIVE_CHECKLIST.md   Pre-live integrity workflow
 │   ├── MEMORY_OUTPUT_CONTRACT.md  Output format spec for memory files
 │   ├── MEMORY_EXTRACTION_POLICY.md  What to extract and when
 │   ├── SKILL_VOCABULARY.md     When to call which skill
@@ -261,14 +280,16 @@ See `docs/SKILL_VOCABULARY.md` for decision guide on when to call each skill.
 │       ├── archive-batch-v2.py  Core archive engine (L2 write)
 │       ├── read-topic.py        Pyrogram reader (L0/live fallback)
 │       ├── manage-candidates.py L1 candidate lifecycle manager
-│       └── build-wiki.py        L3 wiki builder
+│       ├── build-wiki.py        L3 wiki builder
+│       └── validate-wiki.py     Pre-live L3 integrity checker
 ├── skills/
 │   ├── archive-context/SKILL.md
 │   ├── read-topic/SKILL.md
 │   ├── recover-memory/SKILL.md
 │   └── compact-memory/SKILL.md
 ├── tests/
-│   └── test_name_resolver.py
+│   ├── test_name_resolver.py
+│   └── test_validate_wiki.py
 ├── examples/
 │   └── memory/
 │       └── topic-7301.md       Example memory file (telemost pilot)
@@ -333,6 +354,17 @@ python3 -m py_compile scripts/context_access/*.py
 python3 scripts/context_access/archive-batch-v2.py <topic> --status
 ```
 
+### Pre-live
+
+```bash
+pytest -v --tb=short
+bash setup.sh --target /tmp/ocami-prelive --install-scripts copy --test
+python scripts/context_access/build-wiki.py --memory-dir .agent/memory --dry-run
+python scripts/context_access/validate-wiki.py --memory-dir .agent/memory
+```
+
+See `docs/PRE_LIVE_CHECKLIST.md`.
+
 ---
 
 ## Roadmap
@@ -343,7 +375,10 @@ python3 scripts/context_access/archive-batch-v2.py <topic> --status
 | 2 | ✅ Done | `read-topic.py`, skill definitions, runbooks, `.agent-template/` |
 | 3 | ✅ Done | L0 audit log, sub-batch checkpointing, `--compact` flag |
 | 4 | ✅ Done | L1 candidate schema, L3 wiki builder, `setup.sh`, docs |
-| 5 | Planned | Agents migration — integration test of complete L0–L4 stack |
+| C | ✅ Done | CI hardening, pytest config, e2e marker |
+| D | ✅ Done | Wiki provenance: WIKI_META source index + rendered provenance |
+| E | ✅ Done | Pre-live validation: sha256/mtime, validate-wiki, checklist |
+| F | Next | Business review, Q&A, live-agent acceptance tests |
 
 See `docs/ROADMAP.md` for full detail.
 

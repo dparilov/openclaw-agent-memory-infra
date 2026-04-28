@@ -777,6 +777,7 @@ def _import_archive_batch():
     script = Path(__file__).parent / "archive-batch-v2.py"
     spec = importlib.util.spec_from_file_location("archive_batch_v2", script)
     mod = importlib.util.module_from_spec(spec)
+    sys.modules["archive_batch_v2"] = mod
     spec.loader.exec_module(mod)
     return mod
 
