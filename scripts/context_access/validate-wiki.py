@@ -36,6 +36,13 @@ def _parse_iso(ts):
         except ValueError: pass
     return None
 
+def iter_source_entries(meta):
+    """Yield only dict entries from source_files; silently skip non-dicts."""
+    sf=meta.get("source_files",[])
+    if not isinstance(sf,list): return
+    for entry in sf:
+        if isinstance(entry,dict): yield entry
+
 def check_meta_exists(wiki_dir,findings):
     p=wiki_dir/"WIKI_META.json"
     if not p.exists(): findings.append(Finding(ERROR,"meta_missing",f"WIKI_META.json not found: {p}")); return None
@@ -51,7 +58,7 @@ def check_source_files_structure(meta,findings):
     sf=meta.get("source_files")
     if sf is None: findings.append(Finding(ERROR,"source_files_missing","missing source_files")); return
     if not isinstance(sf,list): findings.append(Finding(ERROR,"source_files_not_list","source_files not list")); return
-    req={"path","topic_id","fact_count","last_batch"}
+    req={"path","topic_id","fact_count","last_batch","sha256","mtime"}
     for i,e in enumerate(sf):
         if not isinstance(e,dict): findings.append(Finding(ERROR,"source_files_entry_not_dict",f"sf[{i}] not dict")); continue
         miss=req-e.keys()
@@ -71,7 +78,7 @@ def check_facts_structure(meta,findings):
 
 def check_source_files_exist(meta,memory_dir,findings):
     resolved={}
-    for entry in meta.get("source_files",[]):
+    for entry in iter_source_entries(meta):
         sp=entry.get("path",""); c=memory_dir.parent/sp
         if not c.exists():
             c2=Path(sp)
@@ -99,7 +106,7 @@ def check_fact_text_at_line(facts,resolved,findings):
 def check_fact_count_consistency(meta,facts,findings):
     actual={}
     for f in facts: sp=f.get("source_file",""); actual[sp]=actual.get(sp,0)+1
-    for e in meta.get("source_files",[]):
+    for e in iter_source_entries(meta):
         sp,d,r=e.get("path",""),e.get("fact_count",0),actual.get(e.get("path",""),0)
         if d!=r: findings.append(Finding(ERROR,"fact_count_mismatch",f"{sp!r}: declared={d} actual={r}"))
 
@@ -123,19 +130,20 @@ def check_per_topic_last_batch(meta,facts,findings):
         if d!=r: findings.append(Finding(ERROR,"per_topic_last_batch_mismatch",f"{tid!r}: declared={d!r} actual={r!r}"))
 
 def check_topic_pages_exist(meta,wiki_dir,findings):
-    for e in meta.get("source_files",[]):
+    for e in iter_source_entries(meta):
         tid=e.get("topic_id",""); p=wiki_dir/f"topic-{tid}.md"
         if not p.exists(): findings.append(Finding(ERROR,"topic_page_missing",f"topic {tid!r}: {p}"))
 
-def check_by_type_pages_exist(meta,wiki_dir,findings):
-    types={f.get("fact_type","") for f in meta.get("facts",[]) if f.get("fact_type")}
+def check_by_type_pages_exist(facts,wiki_dir,findings):
+    """Use sanitized facts list (output of check_facts_structure)."""
+    types={f.get("fact_type","") for f in facts if f.get("fact_type")}
     td=wiki_dir/"by-type"
     for ft in sorted(types):
         p=td/f"{ft}.md"
         if not p.exists(): findings.append(Finding(ERROR,"by_type_page_missing",f"{p}"))
 
 def check_sha256_freshness(meta,resolved,findings):
-    for e in meta.get("source_files",[]):
+    for e in iter_source_entries(meta):
         sp,sha=e.get("path",""),e.get("sha256")
         if sha is None: continue
         rp=resolved.get(sp)
@@ -143,14 +151,31 @@ def check_sha256_freshness(meta,resolved,findings):
         if _sha256(rp)!=sha: findings.append(Finding(WARN,"source_sha256_mismatch",f"{sp!r} sha256 changed (stale)"))
 
 def check_mtime_freshness(meta,resolved,findings):
+    """Warn if any source file is newer than built_at."""
     ba=_parse_iso(meta.get("built_at","") or "")
     if ba is None: return
-    for e in meta.get("source_files",[]):
+    for e in iter_source_entries(meta):
         sp=e.get("path",""); rp=resolved.get(sp)
         if rp is None: continue
         try: mt=datetime.fromtimestamp(rp.stat().st_mtime,tz=timezone.utc)
         except: continue
         if mt>ba: findings.append(Finding(WARN,"source_mtime_newer",f"{sp!r} mtime newer than built_at"))
+
+def check_stored_mtime(meta,resolved,findings):
+    """Validate stored mtime format and compare against actual file mtime."""
+    for e in iter_source_entries(meta):
+        sp,stored=e.get("path",""),e.get("mtime")
+        if stored is None: continue
+        parsed=_parse_iso(stored)
+        if parsed is None:
+            findings.append(Finding(WARN,"source_mtime_invalid_format",f"{sp!r} mtime={stored!r} cannot be parsed")); continue
+        rp=resolved.get(sp)
+        if rp is None: continue
+        try: actual=datetime.fromtimestamp(rp.stat().st_mtime,tz=timezone.utc)
+        except: continue
+        if int(actual.timestamp())!=int(parsed.timestamp()):
+            findings.append(Finding(WARN,"source_mtime_mismatch",
+                f"{sp!r} stored={stored!r} actual={actual.strftime('%Y-%m-%dT%H:%M:%SZ')!r}"))
 
 def write_report(report_path,findings,memory_dir):
     errs=[f for f in findings if f.level==ERROR]; warns=[f for f in findings if f.level==WARN]
@@ -173,7 +198,7 @@ def _emit(findings,args):
 def main():
     parser=argparse.ArgumentParser(
         description="Pre-live wiki integrity checker for L3 Knowledge Vault.",
-        epilog="""\nChecks (errors unless noted):\n  meta_exists, schema_version, source_files_structure, facts_structure,\n  source_files_exist, line_numbers, fact_text_near_line [warn],\n  fact_count, conflict_facts, per_topic_last_batch, topic_pages,\n  by_type_pages, sha256_freshness [warn], mtime_freshness [warn]\n\nSee docs/PRE_LIVE_CHECKLIST.md for full pre-live workflow.""",
+        epilog="""\nChecks (errors unless noted):\n  meta_exists, schema_version, source_files_structure, facts_structure,\n  source_files_exist, line_numbers, fact_text_near_line [warn],\n  fact_count, conflict_facts, per_topic_last_batch, topic_pages,\n  by_type_pages, sha256_freshness [warn], mtime_freshness [warn],\n  stored_mtime [warn]\n\nSee docs/PRE_LIVE_CHECKLIST.md for full pre-live workflow.""",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--memory-dir",type=Path,default=Path(".agent/memory"))
     parser.add_argument("--json",action="store_true")
@@ -195,9 +220,10 @@ def main():
     check_conflict_facts_count(meta,facts,findings)
     check_per_topic_last_batch(meta,facts,findings)
     check_topic_pages_exist(meta,wiki_dir,findings)
-    check_by_type_pages_exist(meta,wiki_dir,findings)
+    check_by_type_pages_exist(facts,wiki_dir,findings)
     check_sha256_freshness(meta,resolved,findings)
     check_mtime_freshness(meta,resolved,findings)
+    check_stored_mtime(meta,resolved,findings)
     if args.write_report: write_report(args.write_report,findings,memory_dir)
     _emit(findings,args)
     errs=[f for f in findings if f.level==ERROR]; warns=[f for f in findings if f.level==WARN]
