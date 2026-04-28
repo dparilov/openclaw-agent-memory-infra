@@ -51,6 +51,8 @@ python scripts/context_access/validate-wiki.py --memory-dir .agent/memory --writ
 | by-type page per fact_type | error |
 | sha256 unchanged since build | warning |
 | mtime not newer than built_at | warning |
+| stored mtime parseable (source_mtime_invalid_format) | warning |
+| stored mtime matches actual file mtime (source_mtime_mismatch) | warning |
 
 ## Out of scope
 
