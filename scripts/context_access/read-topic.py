@@ -122,6 +122,7 @@ def import_archive_batch():
         raise SystemExit(f"ERROR: archive-batch-v2.py not found at {script}")
     spec = importlib.util.spec_from_file_location("archive_batch_v2", script)
     mod = importlib.util.module_from_spec(spec)
+    import sys; sys.modules["archive_batch_v2"] = mod  # required for @dataclass to resolve module
     spec.loader.exec_module(mod)
     return mod
 
