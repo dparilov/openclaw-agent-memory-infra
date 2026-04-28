@@ -10,6 +10,8 @@
 #   --install-scripts copy|symlink|none  Install scripts to .agent/tools/context_access/ (default: none)
 #   --dry-run                            Print planned actions, create nothing
 #   --force                              Overwrite existing files
+#   --test, --smoke-test                 Verify setup without live Telegram
+#   --require-telegram                   Promote pyrogram absence from WARN to FAIL
 #   -h|--help                            Show this help
 
 set -euo pipefail
@@ -36,6 +38,8 @@ Options:
   --install-scripts copy|symlink|none  Install scripts to .agent/tools/context_access/ (default: none)
   --dry-run                            Print planned actions, create nothing
   --force                              Overwrite existing files
+  --test, --smoke-test                 Verify setup without live Telegram
+  --require-telegram                   Promote pyrogram absence from WARN to FAIL
   -h|--help                            Show this help
 USAGE
 }
@@ -46,6 +50,8 @@ TOPIC_ID=""
 INSTALL_SCRIPTS="none"
 DRY_RUN=0
 FORCE=0
+SMOKE_TEST=0
+REQUIRE_TELEGRAM=0
 
 # ── Parse args ────────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -55,6 +61,8 @@ while [[ $# -gt 0 ]]; do
     --install-scripts)    INSTALL_SCRIPTS="$2"; shift 2 ;;
     --dry-run)            DRY_RUN=1;            shift   ;;
     --force)              FORCE=1;              shift   ;;
+    --test|--smoke-test)  SMOKE_TEST=1;         shift   ;;
+    --require-telegram)   REQUIRE_TELEGRAM=1;   shift   ;;
     -h|--help)            usage; exit 0 ;;
     *)                    echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
   esac
@@ -381,6 +389,20 @@ enabling the next agent to resume without loss of context.
 Naming convention: `YYYY-MM-DD-HHMMSS-<slug>.md`
 _T_
 
+
+write_file "$TARGET/.agent/config.yaml" <<'_T_'
+# .agent/config.yaml — openclaw-agent-memory-infra project configuration
+# All path values support ~ expansion.
+
+# Pyrogram session file path (without .session extension)
+# pyrogram_session: ~/.openclaw/session
+
+# Directory for read-topic.py checkpoints
+# checkpoint_dir: ~/.openclaw/agents/default/checkpoints
+
+# Base directory for OpenClaw agent session files
+# agents_base: ~/.openclaw/agents
+_T_
 # ── Runbook templates ────────────────────────────────────────────────────────
 
 write_file "$TARGET/.agent/runbooks/coder-agent.md" <<'_T_'
@@ -646,3 +668,82 @@ case "$INSTALL_SCRIPTS" in
 esac
 
 echo "Done. Target: $TARGET"
+# ── B4: non-live smoke test ───────────────────────────────────────────────────
+if [[ $SMOKE_TEST -eq 1 ]]; then
+  _SP=0; _SW=0; _SF=0
+
+  _smoke_pass() { printf '  PASS  %s\n' "$1"; _SP=$((_SP+1)); }
+  _smoke_warn() { printf '  WARN  %s\n' "$1"; _SW=$((_SW+1)); }
+  _smoke_fail() { printf '  FAIL  %s\n' "$1"; _SF=$((_SF+1)); }
+
+  echo "── Smoke test: $TARGET ──────────────────────────────────────────"
+
+  # Python >= 3.10
+  _pyver=$("$PYTHON" --version 2>&1 || echo 'not found')
+  if "$PYTHON" -c "import sys; assert sys.version_info >= (3,10)" 2>/dev/null; then
+    _smoke_pass "Python >= 3.10"
+  else
+    _smoke_fail "Python >= 3.10 (got: $_pyver)"
+  fi
+
+  # PyYAML
+  if "$PYTHON" -c "import yaml" 2>/dev/null; then
+    _smoke_pass "PyYAML importable"
+  else
+    _smoke_fail "PyYAML not importable (pip install pyyaml)"
+  fi
+
+  # .agent/ structure (7 required dirs)
+  for _d in memory checkpoints tasks reviews decisions runbooks handoffs; do
+    if [[ -d "$TARGET/.agent/$_d" ]]; then
+      _smoke_pass ".agent/$_d/"
+    else
+      _smoke_fail ".agent/$_d/ missing"
+    fi
+  done
+
+
+  # config.yaml
+  if [[ -f "$TARGET/.agent/config.yaml" ]]; then
+    _smoke_pass ".agent/config.yaml"
+  else
+    _smoke_fail ".agent/config.yaml missing"
+  fi
+  # Tool --help (4 tools; installed copy takes priority, falls back to source)
+  _TOOL_DIR="$TARGET/.agent/tools/context_access"
+  for _tool in read-topic.py archive-batch-v2.py manage-candidates.py build-wiki.py; do
+    _tp="$_TOOL_DIR/$_tool"
+    if [[ ! -f "$_tp" ]]; then
+      _tp="$SCRIPT_DIR/scripts/context_access/$_tool"
+    fi
+    if [[ -f "$_tp" ]] && "$PYTHON" "$_tp" --help >/dev/null 2>&1; then
+      _smoke_pass "$_tool --help"
+    else
+      _smoke_fail "$_tool --help (not found or failed: $_tp)"
+    fi
+  done
+
+  # pyrogram — WARN unless --require-telegram
+  if "$PYTHON" -c "import pyrogram" 2>/dev/null; then
+    _smoke_pass "pyrogram importable"
+  elif [[ $REQUIRE_TELEGRAM -eq 1 ]]; then
+    _smoke_fail "pyrogram not importable (pip install pyrogram)"
+  else
+    _smoke_warn "pyrogram not importable (Telegram features disabled)"
+  fi
+
+  # Claude Code CLI — optional
+  if command -v claude >/dev/null 2>&1; then
+    _smoke_pass "Claude Code CLI"
+  else
+    _smoke_warn "Claude Code CLI not found (optional)"
+  fi
+
+  echo "────────────────────────────────────────────────────────────────"
+  printf '  PASS: %d  WARN: %d  FAIL: %d\n' "$_SP" "$_SW" "$_SF"
+  if [[ $_SF -gt 0 ]]; then
+    echo "Smoke test FAILED." >&2
+    exit 1
+  fi
+  echo "Smoke test passed."
+fi
