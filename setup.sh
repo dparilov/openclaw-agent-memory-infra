@@ -19,6 +19,16 @@ AGENTS_BASE="${HOME}/.openclaw/agents"
 DRY_RUN=false
 PYTHON="${PYTHON:-python3}"
 
+# ── Portable realpath ─────────────────────────────────────────────────────────
+# macOS ships without GNU coreutils; fall back to Python (already required).
+_realpath() {
+  if command -v realpath &>/dev/null; then
+    realpath "$1"
+  else
+    "$PYTHON" -c "import os, sys; print(os.path.realpath(sys.argv[1]))" "$1"
+  fi
+}
+
 # ── Parse args ────────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -33,7 +43,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-TARGET="$(realpath "$TARGET")"
+TARGET="$(_realpath "$TARGET")"
 AGENT_DIR="$TARGET/.agent"
 MEMORY_DIR="$AGENT_DIR/memory"
 SCRIPTS="$SCRIPT_DIR/scripts/context_access"
