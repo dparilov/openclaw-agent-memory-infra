@@ -26,6 +26,7 @@ import importlib.util
 import json
 import os
 import re
+import hashlib
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -236,6 +237,25 @@ def _display_source_path(path: "Path", memory_dir: "Path") -> str:
         return str(path.relative_to(memory_dir.parent))
     except ValueError:
         return str(path)
+
+
+# ---------------------------------------------------------------------------
+# Source file metadata helpers
+# ---------------------------------------------------------------------------
+
+def _file_sha256(path: Path) -> str:
+    """Return hex SHA-256 of file contents."""
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _file_mtime_iso(path: Path) -> str:
+    """Return ISO-8601 UTC mtime of path."""
+    mtime = path.stat().st_mtime
+    return datetime.fromtimestamp(mtime, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ---------------------------------------------------------------------------
@@ -564,6 +584,8 @@ def main() -> int:
                 "topic_id": tid,
                 "fact_count": len(wiki_facts),
                 "last_batch": last_batch,
+                "sha256": _file_sha256(mf),
+                "mtime": _file_mtime_iso(mf),
             })
 
             stats = build_topic_page(tid, mf, wiki_dir, dry_run=args.dry_run, wiki_facts=wiki_facts)
