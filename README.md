@@ -59,7 +59,7 @@ python3 scripts/context_access/build-wiki.py \
   --memory-dir /path/to/your/project/.agent/memory
 ```
 
-**Requirements:** Python 3.10+, `pyyaml` (optional, for `manage-candidates.py`)
+**Requirements:** Python 3.10+, `pyyaml`, `pyrogram` — see [docs/deployment.md](docs/deployment.md) for full setup including CLI requirements for skill commands.
 
 ---
 
