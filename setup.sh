@@ -711,7 +711,7 @@ if [[ $SMOKE_TEST -eq 1 ]]; then
   else
     _smoke_fail ".agent/config.yaml missing"
   fi
-  # Tool --help (4 tools; installed copy takes priority, falls back to source)
+  # Tool --help (5 tools; installed copy takes priority, falls back to source)
   _TOOL_DIR="$TARGET/.agent/tools/context_access"
   for _tool in read-topic.py archive-batch-v2.py manage-candidates.py build-wiki.py validate-wiki.py; do
     _tp="$_TOOL_DIR/$_tool"

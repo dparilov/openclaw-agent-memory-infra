@@ -20,7 +20,6 @@ No causal claims are made about tool behaviour or session state across entries.
 | [#9](https://github.com/dparilov/openclaw-agent-memory-infra/pull/9) | feat(B3): portable path resolution in read-topic.py | merged | 2026-04-28 |
 | [#10](https://github.com/dparilov/openclaw-agent-memory-infra/pull/10) | feat(B4): add non-live setup smoke test | merged | 2026-04-28 |
 | [#11](https://github.com/dparilov/openclaw-agent-memory-infra/pull/11) | docs: add PROJECT_HISTORY.md | merged | 2026-04-28 |
-
 | [#12](https://github.com/dparilov/openclaw-agent-memory-infra/pull/12) | feat(C): CI hardening — pytest config, GitHub Actions, e2e marker | merged | 2026-04-28 |
 | [#13](https://github.com/dparilov/openclaw-agent-memory-infra/pull/13) | feat(D1): WikiFact parser + WIKI_META provenance index | merged | 2026-04-28 |
 | [#14](https://github.com/dparilov/openclaw-agent-memory-infra/pull/14) | feat(D2): render provenance in wiki pages | merged | 2026-04-28 |
@@ -54,7 +53,8 @@ As of PR #15 + integration fixes:
 321 passed, 4 deselected
 ```
 
-Test files: `tests/test_name_resolver.py`, `tests/test_validate_wiki.py` (18 tests), plus parametrized tests across the suite.
+Test suite: 321 passed, 4 deselected as reported by local pytest for PR #16.
+For authoritative per-file counts, run: `pytest -v --tb=short`
 
 ---
 
