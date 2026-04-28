@@ -10,15 +10,17 @@ read-topic.py — Читает историю топика через Pyrogram u
   python3 scripts/context_access/read-topic.py 7301 --limit 300
   python3 scripts/context_access/read-topic.py 7301 --since-id 15800
   python3 scripts/context_access/read-topic.py 7301 --batch-format
+  python3 scripts/context_access/read-topic.py 7301 --chat-id -1001234567890 --checkpoint-dir /tmp/cp
 
 Выходные форматы:
   (default)       raw transcript — строки вида [DD.MM HH:MM] sender: text
   --batch-format  структурированный вывод для передачи в archive-batch-v2.py
 
 Переменные окружения:
-  OPENCLAW_AGENTS   путь к ~/.openclaw/agents/ (default: ~/.openclaw/agents)
-  PYROGRAM_SESSION  путь к файлу .session (default: ~/.openclaw/workspace/ops/userbot)
-  PYROGRAM_VENV     путь к site-packages pyrogram (auto-detect если не задан)
+  OPENCLAW_AGENTS         путь к ~/.openclaw/agents/ (default: ~/.openclaw/agents)
+  OPENCLAW_CHECKPOINT_DIR путь к директории чекпоинтов (default: .agent/checkpoints/ или ~/.openclaw/workspace/ops)
+  PYROGRAM_SESSION        путь к файлу .session (default: ~/.openclaw/workspace/ops/userbot)
+  PYROGRAM_VENV           путь к site-packages pyrogram (auto-detect если не задан)
 """
 import argparse
 import asyncio
@@ -32,33 +34,103 @@ from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
+# Project-root auto-detection
+# ---------------------------------------------------------------------------
+
+def detect_project_root(_script_path: "Path | None" = None) -> "Path | None":
+    """
+    If this script lives at <root>/.agent/tools/context_access/read-topic.py,
+    return <root>. Otherwise return None.
+
+    This lets the script auto-configure paths when installed via
+    setup.sh --install-scripts copy|symlink.
+
+    Args:
+        _script_path: Override __file__ for unit testing only.
+    """
+    here = (_script_path if _script_path is not None else Path(__file__)).resolve().parent
+    if (
+        here.name == "context_access"
+        and here.parent.name == "tools"
+        and here.parent.parent.name == ".agent"
+    ):
+        return here.parent.parent.parent
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Path resolution
 # ---------------------------------------------------------------------------
 
-def find_pyrogram():
-    """Locate pyrogram in known venv locations or system."""
-    candidates = [
-        Path.home() / ".openclaw/workspace/.venv/lib/python3.12/site-packages",
-        Path.home() / ".openclaw/workspace/.venv/lib/python3.11/site-packages",
-        Path(os.environ.get("PYROGRAM_VENV", "")),
-    ]
+def find_pyrogram() -> "str | None":
+    """Locate pyrogram in known venv locations or system.
+
+    Priority:
+      1. PYROGRAM_VENV env var (explicit override)
+      2. OpenClaw workspace .venv
+      3. Project-local .venv (when running from .agent/tools/context_access/)
+    """
+    candidates = []
+    # 1. Explicit env var takes highest priority
+    venv_env = os.environ.get("PYROGRAM_VENV", "")
+    if venv_env:
+        candidates.append(Path(venv_env))
+    # 2. OpenClaw workspace defaults
+    candidates.extend([
+        Path.home() / ".openclaw" / "workspace" / ".venv" / "lib" / "python3.12" / "site-packages",
+        Path.home() / ".openclaw" / "workspace" / ".venv" / "lib" / "python3.11" / "site-packages",
+    ])
+    # 3. Project-local .venv (when running from .agent/tools/context_access/)
+    proj = detect_project_root()
+    if proj:
+        for pyver in ("3.12", "3.11", "3.10", "3.9"):
+            candidates.append(proj / ".venv" / "lib" / f"python{pyver}" / "site-packages")
     for c in candidates:
         if c.exists() and (c / "pyrogram").exists():
             return str(c)
     return None  # rely on system python path
 
 
-def checkpoint_path(topic_id: str) -> Path:
+def resolve_checkpoint_dir(
+    cli_arg: "str | None" = None,
+    _script_path: "Path | None" = None,
+) -> Path:
+    """
+    Resolve the directory used for checkpoint files.
+
+    Priority:
+      1. --checkpoint-dir CLI argument
+      2. OPENCLAW_CHECKPOINT_DIR environment variable
+      3. Auto-detect: <project_root>/.agent/checkpoints/
+         (when script runs from .agent/tools/context_access/)
+      4. Legacy fallback: ~/.openclaw/workspace/ops
+
+    Args:
+        cli_arg: Value from --checkpoint-dir CLI arg.
+        _script_path: Override script path for unit testing only.
+    """
+    if cli_arg:
+        return Path(cli_arg)
+    env = os.environ.get("OPENCLAW_CHECKPOINT_DIR")
+    if env:
+        return Path(env)
+    proj = detect_project_root(_script_path)
+    if proj:
+        return proj / ".agent" / "checkpoints"
+    return Path.home() / ".openclaw" / "workspace" / "ops"
+
+
+def checkpoint_path(topic_id: str, checkpoint_dir: "Path | None" = None) -> Path:
     """Path to sub-batch checkpoint file for this topic."""
-    ops_dir = Path.home() / ".openclaw/workspace/ops"
-    ops_dir.mkdir(parents=True, exist_ok=True)
-    return ops_dir / f"read-topic-checkpoint-{topic_id}.json"
+    d = checkpoint_dir if checkpoint_dir is not None else resolve_checkpoint_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"read-topic-checkpoint-{topic_id}.json"
 
 
-def load_checkpoint(topic_id: str) -> int | None:
+def load_checkpoint(topic_id: str, checkpoint_dir: "Path | None" = None) -> "int | None":
     """Return last processed message_id from checkpoint, or None."""
     import json as _json
-    cp = checkpoint_path(topic_id)
+    cp = checkpoint_path(topic_id, checkpoint_dir)
     if cp.exists():
         try:
             data = _json.loads(cp.read_text())
@@ -68,48 +140,72 @@ def load_checkpoint(topic_id: str) -> int | None:
     return None
 
 
-def save_checkpoint(topic_id: str, last_message_id: int, sub_batch: int) -> None:
+def save_checkpoint(
+    topic_id: str,
+    last_message_id: int,
+    sub_batch: int,
+    checkpoint_dir: "Path | None" = None,
+) -> None:
     """Write checkpoint after processing a sub-batch."""
     import json as _json
-    cp = checkpoint_path(topic_id)
+    cp = checkpoint_path(topic_id, checkpoint_dir)
     cp.write_text(_json.dumps({
         "topic_id": topic_id,
         "last_message_id": last_message_id,
         "sub_batch": sub_batch,
-        "ts": __import__('datetime').datetime.now(__import__('datetime').timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }, ensure_ascii=False))
-    print(f"[read-topic] Checkpoint saved: last_message_id={last_message_id} sub_batch={sub_batch}", file=sys.stderr)
+    print(
+        f"[read-topic] Checkpoint saved: last_message_id={last_message_id} sub_batch={sub_batch}",
+        file=sys.stderr,
+    )
 
 
-def clear_checkpoint(topic_id: str) -> None:
-    cp = checkpoint_path(topic_id)
+def clear_checkpoint(topic_id: str, checkpoint_dir: "Path | None" = None) -> None:
+    cp = checkpoint_path(topic_id, checkpoint_dir)
     if cp.exists():
         cp.unlink()
         print(f"[read-topic] Checkpoint cleared for topic {topic_id}", file=sys.stderr)
 
 
-def find_session_file():
-    """Locate userbot .session file."""
-    explicit = os.environ.get("PYROGRAM_SESSION")
+def agents_base(cli_arg: "str | None" = None) -> Path:
+    """
+    Resolve the agents base directory.
+
+    Priority:
+      1. --agents-base CLI argument
+      2. OPENCLAW_AGENTS environment variable
+      3. Default: ~/.openclaw/agents
+    """
+    if cli_arg:
+        return Path(cli_arg)
+    return Path(os.environ.get("OPENCLAW_AGENTS", str(Path.home() / ".openclaw" / "agents")))
+
+
+def find_session_file(session_file: "str | None" = None) -> "tuple[str, str]":
+    """
+    Locate userbot .session file.
+
+    Priority:
+      1. session_file parameter (from --session-file CLI arg)
+      2. PYROGRAM_SESSION environment variable
+      3. Default location: ~/.openclaw/workspace/ops/userbot.session
+      4. Glob search under ~/.openclaw/workspace/
+    """
+    explicit = session_file or os.environ.get("PYROGRAM_SESSION")
     if explicit:
-        return str(Path(explicit).parent), Path(explicit).name.replace(".session", "")
-    default = Path.home() / ".openclaw/workspace/ops"
+        p = Path(explicit)
+        return str(p.parent), p.name.replace(".session", "")
+    default = Path.home() / ".openclaw" / "workspace" / "ops"
     if (default / "userbot.session").exists():
         return str(default), "userbot"
     # search common locations
-    for pattern in [
-        Path.home() / ".openclaw/workspace" / "**" / "*.session",
-    ]:
-        import glob
-        found = glob.glob(str(pattern), recursive=True)
-        if found:
-            p = Path(found[0])
-            return str(p.parent), p.stem
-    raise SystemExit("ERROR: userbot .session file not found. Set PYROGRAM_SESSION env var.")
-
-
-def agents_base() -> Path:
-    return Path(os.environ.get("OPENCLAW_AGENTS", Path.home() / ".openclaw/agents"))
+    import glob
+    found = glob.glob(str(Path.home() / ".openclaw" / "workspace" / "**" / "*.session"), recursive=True)
+    if found:
+        p = Path(found[0])
+        return str(p.parent), p.stem
+    raise SystemExit("ERROR: userbot .session file not found. Set PYROGRAM_SESSION env var or use --session-file.")
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +218,7 @@ def import_archive_batch():
         raise SystemExit(f"ERROR: archive-batch-v2.py not found at {script}")
     spec = importlib.util.spec_from_file_location("archive_batch_v2", script)
     mod = importlib.util.module_from_spec(spec)
-    import sys; sys.modules["archive_batch_v2"] = mod  # required for @dataclass to resolve module
+    sys.modules["archive_batch_v2"] = mod  # required for @dataclass to resolve module
     spec.loader.exec_module(mod)
     return mod
 
@@ -131,18 +227,15 @@ def import_archive_batch():
 # Discover chat_id from session metadata for a given topic_id
 # ---------------------------------------------------------------------------
 
-def discover_chat_id(topic_id: str, base: Path) -> str | None:
+def discover_chat_id(topic_id: str, base: Path) -> "str | None":
     """Extract Telegram chat_id from session files for this topic."""
-    patterns = [
-        str(base / "*" / "sessions" / f"*-topic-{topic_id}.jsonl"),
-    ]
     import glob
+    patterns = [str(base / "*" / "sessions" / f"*-topic-{topic_id}.jsonl")]
     paths = []
     for p in patterns:
         paths.extend(glob.glob(p))
     if not paths:
         return None
-    # read first file, grab chat_id from metadata
     for path in sorted(paths):
         text = Path(path).read_text(errors="replace")
         m = re.search(r'"chat_id"\s*:\s*"?(?:telegram:)?(-?\d+)"?', text)
@@ -163,10 +256,10 @@ async def fetch_messages(
     chat_id: int,
     topic_id: int,
     limit: int,
-    since_id: int | None,
+    since_id: "int | None",
     workdir: str,
     session_name: str,
-) -> list[tuple]:
+) -> list:
     """Fetch messages from Telegram topic. Returns list of (date, msg_id, sender, text)."""
     from pyrogram import Client
     from pyrogram.errors import FloodWait
@@ -234,7 +327,7 @@ async def fetch_messages(
 # Output formatters
 # ---------------------------------------------------------------------------
 
-def print_raw(messages: list[tuple], chat_id: int, topic_id: int) -> None:
+def print_raw(messages: list, chat_id: int, topic_id: int) -> None:
     print(f"=== Топик {topic_id} в чате {chat_id} ({len(messages)} сообщений) ===\n")
     for date, mid, sender, text in messages:
         preview = text[:500].replace("\n", " ")
@@ -245,7 +338,7 @@ def print_raw(messages: list[tuple], chat_id: int, topic_id: int) -> None:
         print(f"\n# last-message-id: {last_id}", file=sys.stderr)
 
 
-def print_batch_format(messages: list[tuple], chat_id: int, topic_id: int) -> None:
+def print_batch_format(messages: list, chat_id: int, topic_id: int) -> None:
     """Output as structured transcript block, suitable for LLM fact-extraction
     and downstream piping into archive-batch-v2.py --batch."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
@@ -290,25 +383,37 @@ def main():
                         help="Resume from checkpoint: use last saved message ID as --since-id.")
     parser.add_argument("--clear-checkpoint", action="store_true",
                         help="Clear checkpoint file for this topic and exit.")
+    # Portable path overrides
+    parser.add_argument("--checkpoint-dir", default=None,
+                        help="Directory for checkpoint files. "
+                             "Overrides OPENCLAW_CHECKPOINT_DIR env var and auto-detection. "
+                             "Auto-detected as .agent/checkpoints/ when running from project tree.")
+    parser.add_argument("--agents-base", default=None,
+                        help="Path to OpenClaw agents dir. "
+                             "Overrides OPENCLAW_AGENTS env var (default: ~/.openclaw/agents).")
+    parser.add_argument("--session-file", default=None,
+                        help="Path to Pyrogram .session file. "
+                             "Overrides PYROGRAM_SESSION env var.")
     args = parser.parse_args()
 
-    # 1. resolve topic name → numeric ID
-    base = agents_base()
+    # Resolve portable paths up front
+    cp_dir = resolve_checkpoint_dir(args.checkpoint_dir)
+    base = agents_base(args.agents_base)
     ab = import_archive_batch()
 
     # Handle --clear-checkpoint early (before resolution if possible)
     if args.clear_checkpoint:
-        # resolve first to get numeric id
         topic_id_str_early = ab.resolve_topic_id(args.topic, base)
-        clear_checkpoint(topic_id_str_early)
+        clear_checkpoint(topic_id_str_early, cp_dir)
         return
 
+    # 1. resolve topic name → numeric ID
     topic_id_str = ab.resolve_topic_id(args.topic, base)
     topic_id_int = int(topic_id_str)
 
     # --resume: load since_id from checkpoint
     if args.resume and args.since_id is None:
-        saved = load_checkpoint(topic_id_str)
+        saved = load_checkpoint(topic_id_str, cp_dir)
         if saved is not None:
             print(f"[read-topic] Resuming from checkpoint: since_id={saved}", file=sys.stderr)
             args.since_id = saved
@@ -330,7 +435,7 @@ def main():
         sys.path.insert(0, venv)
 
     # 4. locate session file
-    workdir, session_name = find_session_file()
+    workdir, session_name = find_session_file(args.session_file)
 
     print(
         f"[read-topic] chat={chat_id_int} topic={topic_id_int} limit={args.limit} since_id={args.since_id}",
@@ -353,21 +458,19 @@ def main():
     sub = args.sub_batch_size
     total = len(messages)
     if total > sub:
-        # Output only the first sub-batch; checkpoint last message of that batch
         output_msgs = messages[:sub]
         remaining = total - sub
-        last_id = output_msgs[-1][1]  # msg_id from tuple (date, msg_id, sender, text)
+        last_id = output_msgs[-1][1]
         print(
             f"[read-topic] {total} messages fetched, outputting sub-batch 0 ({sub} msgs). "
             f"Remaining: {remaining}. Run with --resume to continue.",
             file=sys.stderr,
         )
-        save_checkpoint(topic_id_str, last_id, sub_batch=0)
+        save_checkpoint(topic_id_str, last_id, sub_batch=0, checkpoint_dir=cp_dir)
     else:
         output_msgs = messages
-        # If we had a checkpoint and finished all messages, clear it
         if args.resume:
-            clear_checkpoint(topic_id_str)
+            clear_checkpoint(topic_id_str, cp_dir)
 
     # 7. output
     if args.batch_format:
