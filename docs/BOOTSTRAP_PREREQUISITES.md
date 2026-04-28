@@ -149,7 +149,7 @@ python3 -c "import pyrogram; print('Pyrogram OK')"
 
 **Note:** Pyrogram is NOT required for session_history-only discovery. Only check if the project policy explicitly requires live Telegram reads.
 
-**Failure action:** If topic IDs are unknown, project is discovery-ready but not setup-ready.
+**Failure action:** If topic IDs are unknown, or if neither OpenClaw runtime nor an alternative session_history access is available, the project is **not discovery-ready** (Level 0 only).
 
 ---
 
@@ -282,21 +282,60 @@ Verdict:
 
 | Condition | Next step |
 |-----------|-----------|
+| Level 0 passes only | External review possible; cannot start discovery without OpenClaw/session_history access |
 | Level 1 passes | Proceed to `docs/PROJECT_DISCOVERY_FROM_TOPICS.md` with topic IDs only |
 | Level 2 passes | Infra agent may run `setup.sh` after Project Intake draft is confirmed |
 | Level 3 passes | Proceed to `docs/MEMORY_MIGRATION_PLAYBOOK.md` M0/M1 |
-| Any P0 prerequisite fails | **Stop.** Do not start project onboarding. Escalate to human if unclear. |
+| OpenClaw unreachable, no alternative | Verdict: **READY FOR EXTERNAL REVIEW (Level 0) only** — cannot proceed to discovery |
+| Any P0 for current target level fails | **Stop.** Fix blockers or escalate to human. |
 
-**P0 prerequisites** (blocking):
+## Blocking Prerequisites by Readiness Level
+
+### P0 for Level 0 — External review ready
+
+Blocking:
 - Python 3.10+
 - PyYAML available
-- Memory infra repo scripts compile
+- memory-infra repo can be cloned/read
+- Scripts compile without errors
 - Human escalation handle known
 
-**P1 prerequisites** (warn, not blocking for discovery):
-- OpenClaw runtime reachable
-- GitHub write access
-- Target workspace cloned
+### P0 for Level 1 — Discovery ready
+
+Blocking:
+- OpenClaw runtime reachable **OR** explicit alternative access to OpenClaw session_history
+- Infra / coder / reviewer topic IDs known
+- Infra agent or operator can read session_history for the three topics
+- Sensitive data policy known: skip / manual review / redact / abort
+
+> **Note:** If OpenClaw is not reachable and no alternative session_history access exists,
+> the verdict cannot be READY FOR PROJECT DISCOVERY. Maximum achievable level is Level 0
+> (External review ready).
+
+### P0 for Level 2 — Setup ready
+
+Blocking:
+- Level 1 passes
+- Target repo URL known
+- Git read access to target repo
+- Local workspace / path known or cloneable
+- `setup.sh --help` works
+- Setup smoke test can be run
+
+### P0 for Level 3 — Migration ready
+
+Blocking:
+- Level 2 passes
+- Migration map approved by human
+- Candidate / memory policy known
+- `validate-wiki.py` available and runs
+
+### P1 — Warnings (non-blocking depending on target level)
+
+- GitHub write access — not required for discovery-only
+- Pyrogram — not required unless live Telegram read is explicitly needed
+- Meridian / MeridianA — not required unless coder role needs it now
+- GitHub merge permission — not required unless live PR cycle is being tested
 
 ---
 
