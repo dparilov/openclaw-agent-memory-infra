@@ -34,4 +34,10 @@ jobs:
       - name: Smoke test (--dry-run --test)
         run: |
           bash setup.sh --target /tmp/ci-smoke-test --test
-          bash setup.sh --dry-run --test --target /tmp/ci-smoke-dryrun || true
+
+          if bash setup.sh --dry-run --test --target /tmp/ci-smoke-dryrun; then
+            echo "ERROR: --dry-run --test unexpectedly passed"
+            exit 1
+          else
+            echo "OK: --dry-run --test failed as expected"
+          fi
