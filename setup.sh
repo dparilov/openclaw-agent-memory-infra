@@ -510,13 +510,14 @@ A candidate may be auto-promoted when ALL of the following hold:
 - Any claim containing high-risk keywords
 
 ## Process
-1. `manage-candidates.py promote --auto` — promotes qualifying candidates
+1. Run `python .agent/tools/context_access/manage-candidates.py <topic> --promote-auto --memory-dir .agent/memory`
 2. Review `.agent/memory/reports/pending-approval.md` for manual items
-3. After human approval, run `manage-candidates.py promote --id <id>`
+3. After human approval, run `python .agent/tools/context_access/manage-candidates.py <topic> --approve <candidate-id> --memory-dir .agent/memory`
 
 ## After Promotion
-- Promoted facts land in `.agent/memory/promoted/`
-- Run `build-wiki.py` to rebuild `.agent/memory/wiki/`
+- Promoted facts are appended to `.agent/memory/topic-<id>.md` as a new batch.
+- Candidate YAML status is updated to `auto-promoted` or `approved`.
+- After promotion, run `build-wiki.py` and `validate-wiki.py`.
 _T_
 
 write_file "$TARGET/.agent/runbooks/session-history-usage-policy.md" <<'_T_'
@@ -618,6 +619,7 @@ SCRIPTS_LIST=(
   "scripts/context_access/read-topic.py"
   "scripts/context_access/manage-candidates.py"
   "scripts/context_access/build-wiki.py"
+  "scripts/context_access/validate-wiki.py"
   "scripts/context_access/io_utils.py"
 )
 TOOL_DIR="$TARGET/.agent/tools/context_access"
@@ -709,9 +711,9 @@ if [[ $SMOKE_TEST -eq 1 ]]; then
   else
     _smoke_fail ".agent/config.yaml missing"
   fi
-  # Tool --help (4 tools; installed copy takes priority, falls back to source)
+  # Tool --help (5 tools; installed copy takes priority, falls back to source)
   _TOOL_DIR="$TARGET/.agent/tools/context_access"
-  for _tool in read-topic.py archive-batch-v2.py manage-candidates.py build-wiki.py; do
+  for _tool in read-topic.py archive-batch-v2.py manage-candidates.py build-wiki.py validate-wiki.py; do
     _tp="$_TOOL_DIR/$_tool"
     if [[ ! -f "$_tp" ]]; then
       _tp="$SCRIPT_DIR/scripts/context_access/$_tool"

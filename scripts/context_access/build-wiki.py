@@ -525,6 +525,7 @@ def main() -> int:
         if ab_script.exists():
             spec = importlib.util.spec_from_file_location("archive_batch_v2", ab_script)
             mod = importlib.util.module_from_spec(spec)
+            sys.modules["archive_batch_v2"] = mod
             spec.loader.exec_module(mod)
             topic_id = mod.resolve_topic_id(args.topic, args.agents_base)
         else:

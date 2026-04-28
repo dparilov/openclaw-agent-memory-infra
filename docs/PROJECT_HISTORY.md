@@ -19,13 +19,42 @@ No causal claims are made about tool behaviour or session state across entries.
 | [#8](https://github.com/dparilov/openclaw-agent-memory-infra/pull/8) | feat(B1-B2): bootstrap structure and local script install modes | merged | 2026-04-28 |
 | [#9](https://github.com/dparilov/openclaw-agent-memory-infra/pull/9) | feat(B3): portable path resolution in read-topic.py | merged | 2026-04-28 |
 | [#10](https://github.com/dparilov/openclaw-agent-memory-infra/pull/10) | feat(B4): add non-live setup smoke test | merged | 2026-04-28 |
-| [#11](https://github.com/dparilov/openclaw-agent-memory-infra/pull/11) | docs: add PROJECT_HISTORY.md | open | 2026-04-28 |
+| [#11](https://github.com/dparilov/openclaw-agent-memory-infra/pull/11) | docs: add PROJECT_HISTORY.md | merged | 2026-04-28 |
+| [#12](https://github.com/dparilov/openclaw-agent-memory-infra/pull/12) | feat(C): CI hardening — pytest config, GitHub Actions, e2e marker | merged | 2026-04-28 |
+| [#13](https://github.com/dparilov/openclaw-agent-memory-infra/pull/13) | feat(D1): WikiFact parser + WIKI_META provenance index | merged | 2026-04-28 |
+| [#14](https://github.com/dparilov/openclaw-agent-memory-infra/pull/14) | feat(D2): render provenance in wiki pages | merged | 2026-04-28 |
+| [#15](https://github.com/dparilov/openclaw-agent-memory-infra/pull/15) | feat(E1-E4): sha256/mtime in source index + wiki validator + tests + checklist | merged | 2026-04-28 |
+| — | `60a84a8` docs: add source_mtime_mismatch + source_mtime_invalid_format to checklist | direct commit | 2026-04-28 |
 
 ### Notes on PRs #5 and #6
 
 The GitHub API reports both PRs as `MERGED` (mergedAt is set).  
 Commits `1f4332c` (PR #5) and `a328edd` (PR #6) are present on `main`.  
 PR #7 was a control-plane visibility test; it was closed without merging.
+
+
+---
+
+## Section Summaries
+
+| Section | PRs | Description |
+|---------|-----|-------------|
+| A | #1–#6 | Core pipeline, atomic writes, dry-run, sys.modules fix |
+| B | #8–#11 | Bootstrap `setup.sh`, script install modes, smoke test, PROJECT_HISTORY |
+| C | #12 | CI hardening: pytest config, GitHub Actions, e2e marker |
+| D | #13–#14 | Wiki provenance: WIKI_META source index + rendered provenance |
+| E | #15 | Pre-live validation: sha256/mtime, `validate-wiki.py`, checklist |
+
+## Test Summary
+
+As of PR #15 + integration fixes:
+
+```
+321 passed, 4 deselected
+```
+
+Test suite: 321 passed, 4 deselected as reported by local pytest for PR #16.
+For authoritative per-file counts, run: `pytest -v --tb=short`
 
 ---
 
@@ -77,6 +106,7 @@ bash setup.sh --target /path/to/project --test --require-telegram
 | `archive-batch-v2.py --help` | FAIL |
 | `manage-candidates.py --help` | FAIL |
 | `build-wiki.py --help` | FAIL |
+| `validate-wiki.py --help` | FAIL |
 | pyrogram importable | WARN (FAIL with `--require-telegram`) |
 | Claude Code CLI | WARN |
 
