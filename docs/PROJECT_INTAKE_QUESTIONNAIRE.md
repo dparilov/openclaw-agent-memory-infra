@@ -40,7 +40,8 @@ PR policy *:                 (e.g. squash-merge only, no force-push to main)
 Who may merge *:             (human only / reviewer + human / any with CI green)
 Are direct commits allowed:  yes / no / yes with restrictions: <describe>
 Where are task specs stored: (e.g. .agent/tasks/)
-Where are review docs stored:(e.g. .agent/handoffs/)
+Where are review docs stored: (e.g. .agent/reviews/)
+Where are handoffs stored: (e.g. .agent/handoffs/)
 ```
 
 ---

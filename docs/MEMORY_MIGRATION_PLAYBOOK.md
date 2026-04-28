@@ -75,51 +75,57 @@ Migration map example:
 
 ---
 
-## M2 — Controlled Archive Batches
+## M2 — Read / Preview Source Batches
 
-**Write.** Archive low-risk batches only, after migration map is approved.
+**Read-only.** Inspect available batches and preview content before any write.
 
 Rules:
-- Archive only sources approved in M1 for this stage.
-- Check `last-batch` header before archiving to avoid re-archiving.
-- Use `archive-batch-v2.py` — do not write to memory files directly.
-- Archive one source at a time; report status after each.
+- Do not write or promote in this stage.
+- Check `last-batch` header to identify already-archived batches.
+- Preview each batch before passing to M3.
 
 ```bash
-python .agent/tools/context_access/archive-batch-v2.py <topic-id> \
-  --write <batch-file> \
-  --session-id <migration-session-id> \
-  --memory-dir .agent/memory \
-  --auto-mark-done
+# Check batch status for a topic
+python .agent/tools/context_access/archive-batch-v2.py <topic-id> --status
+
+# Preview a specific batch (save for M3 extraction)
+python .agent/tools/context_access/archive-batch-v2.py <topic-id> --batch N > /tmp/topic-N-batch.txt
 ```
 
-Report after each batch:
+Report after each source:
 
 ```
-Archived: <source>
-Batch: <N>
-Facts written: <count>
-Skipped (duplicate): <count>
+Source: <topic-id>
+Batches available: <N>
+Already archived: <M>
+Previewed to: /tmp/topic-N-batch.txt
 Status: OK / ERROR
 ```
 
 ---
 
-## M3 — Candidate Extraction
+## M3 — Extract Durable Facts and Create Candidates
 
-**Write.** Extract candidates from archived batches.
+**Write.** Extract durable bullet facts from batch previews and create candidates.
+
+Step 1 — manually extract durable facts from the previewed batch into a facts file (`facts.txt`), one fact per line.
+
+Step 2 — create candidates with full evidence flags:
 
 ```bash
 python .agent/tools/context_access/manage-candidates.py <topic> \
-  --add <batch-facts-file> \
-  --memory-dir .agent/memory
+  --add facts.txt \
+  --memory-dir .agent/memory \
+  --source-kind session_history \
+  --source-ref "topic:<topic-id> batch:<N>" \
+  --locator "batch:<N>"
 ```
 
 For each candidate, the agent must record:
 
 ```
 Text:         <fact text>
-Evidence:     <source reference — session ID, batch N, line>
+Evidence:     <source reference — topic, batch N>
 Risk:         low / medium / high
 Confidence:   high / medium / low
 Provenance:   <topic / session>

@@ -184,9 +184,28 @@ Urgency:          low / medium / high / blocking
 After a PR is merged, the responsible agent must:
 
 ```
-1. Archive session facts if new durable facts were established:
-   python .agent/tools/context_access/archive-batch-v2.py <topic> --write <facts> ...
+1. Archive new durable facts via candidate-first flow (default):
+```
 
+```bash
+# Step 1: create candidates with evidence
+python .agent/tools/context_access/manage-candidates.py <topic> \
+  --add facts.txt \
+  --memory-dir .agent/memory \
+  --source-kind pr \
+  --source-ref "PR #<N>" \
+  --locator "post-merge"
+
+# Step 2: auto-promote low-risk candidates
+python .agent/tools/context_access/manage-candidates.py <topic> \
+  --promote-auto \
+  --memory-dir .agent/memory
+```
+
+> **Note:** Direct L2 write via `archive-batch-v2.py --write` is allowed only if project
+> policy explicitly permits low-risk direct writes for this topic.
+
+```
 2. Rebuild wiki:
    python .agent/tools/context_access/build-wiki.py --memory-dir .agent/memory
 
