@@ -87,3 +87,68 @@ No special backup needed beyond regular git commits.
    ```
 3. Add the topic to `.agent/AGENT_CONTEXT.md` under "Active Topics"
 4. Commit the new `memory/topic-<id>.md`
+
+---
+
+## Incident: Tool Calls Blocked ("Forwarding to client for execution")
+
+### Symptoms
+
+All standard tool calls (Bash, Edit, Write, Skill, etc.) return:
+```
+Forwarding to client for execution
+```
+or
+```
+PreToolUse:Callback hook blocking error from command: "callback": Forwarding to client for execution
+```
+
+### Root cause
+
+OpenClaw gateway injects a `PreToolUse:Callback` hook at runtime when a pending
+client-side callback is queued and not yet resolved. This is NOT stored in
+`openclaw.json` — it is a built-in gateway mechanism.
+
+Known triggers:
+- Calling the `Skill` tool mid-session (skills execute via Telegram client callback)
+- Calling `sys_ctrl restart` with a `continuationMessage` parameter (creates a new
+  pending callback after restart)
+- Any tool call that times out while the gateway is waiting for client acknowledgement
+
+### Diagnostic steps
+
+1. **Check if mcp__oc__sys_ctrl works** — it almost always bypasses the hook:
+   ```
+   sys_ctrl → config.get path=agents.defaults.hooks
+   ```
+   If it returns `PreToolUse` entries, the hook is active.
+
+2. **Verify tools were working recently** — check conversation history.
+   If tools worked earlier in this session and `openclaw.json` was not changed,
+   the block is transient (pending callback queue), not a configuration issue.
+
+3. **Do NOT modify settings.json or openclaw.json** — the hook is runtime-injected,
+   config changes will have no effect and may cause unintended side effects.
+
+### Fix
+
+**Trigger a gateway restart (SIGUSR1):**
+```
+sys_ctrl → action: restart, note: "Clear PreToolUse callback queue"
+```
+
+**Important:** do NOT include a `continuationMessage` parameter — it creates a new
+pending callback immediately, which may re-trigger the block after restart.
+
+After restart, send a plain user message ("Continue" or similar) to re-activate
+the session. Tools should work again on the next turn.
+
+### Prevention
+
+- Do not call `Skill` tool (`/read-context`, `/archive-context`, etc.) in the
+  middle of an active coding/tool-heavy session. Run skills at the beginning or
+  end of a session.
+- When using `sys_ctrl restart`, omit `continuationMessage` unless you specifically
+  need it and know the callback will be resolved quickly.
+- If you encounter this block: stop, do not retry tool calls in a loop,
+  trigger one gateway restart, wait for the user's next message.
