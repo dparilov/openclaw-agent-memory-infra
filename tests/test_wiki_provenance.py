@@ -341,3 +341,65 @@ class TestDryRunWritesNothing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Test: extract_facts conflict filtering
+# ---------------------------------------------------------------------------
+
+class TestExtractFactsConflictFiltering(unittest.TestCase):
+
+    def test_extract_facts_skips_conflicts_by_default(self):
+        facts = extract_facts(SAMPLE_CONTENT)
+        conflict_texts = [f["text"] for f in facts if "CONFLICT" in f["text"]]
+        self.assertEqual(conflict_texts, [],
+                         "extract_facts() must skip conflict facts by default")
+
+    def test_extract_facts_can_include_conflicts(self):
+        facts = extract_facts(SAMPLE_CONTENT, include_conflicts=True)
+        conflict_texts = [f["text"] for f in facts if "CONFLICT" in f["text"]]
+        self.assertTrue(len(conflict_texts) >= 1,
+                        "include_conflicts=True must return conflict facts")
+
+
+# ---------------------------------------------------------------------------
+# Test: source paths are portable (not absolute)
+# ---------------------------------------------------------------------------
+
+class TestSourcePathsPortable(unittest.TestCase):
+
+    def setUp(self):
+        import tempfile as _tf
+        self.tmp = _tf.mkdtemp()
+        self.mem_dir = Path(self.tmp) / "memory"
+        self.mem_dir.mkdir()
+        (self.mem_dir / "topic-8888.md").write_text(SAMPLE_CONTENT, encoding="utf-8")
+
+    def _run_build_and_meta(self):
+        import sys as _sys
+        old_argv = _sys.argv[:]
+        _sys.argv = ["build-wiki.py", "--memory-dir", str(self.mem_dir)]
+        try:
+            bw.main()
+        except SystemExit:
+            pass
+        finally:
+            _sys.argv = old_argv
+        meta_path = self.mem_dir / "wiki" / "WIKI_META.json"
+        return json.loads(meta_path.read_text())
+
+    def test_source_files_path_not_absolute(self):
+        meta = self._run_build_and_meta()
+        for sf in meta["source_files"]:
+            self.assertFalse(
+                Path(sf["path"]).is_absolute(),
+                f"source_files[].path is absolute: {sf['path']!r}"
+            )
+
+    def test_fact_source_file_not_absolute(self):
+        meta = self._run_build_and_meta()
+        for f in meta["facts"]:
+            self.assertFalse(
+                Path(f["source_file"]).is_absolute(),
+                f"fact source_file is absolute: {f['source_file']!r}"
+            )

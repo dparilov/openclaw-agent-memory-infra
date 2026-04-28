@@ -134,12 +134,16 @@ def parse_facts(
     return facts
 
 
-def extract_facts(content: str) -> list[dict]:
+def extract_facts(content: str, *, include_conflicts: bool = False) -> list[dict]:
     """Backward-compatible wrapper around parse_facts().
 
     Returns list of {text, batch_n, is_conflict} dicts as before.
+    By default skips conflict facts (is_conflict=True) to preserve
+    pre-D1 rendering behaviour. Pass include_conflicts=True to get all.
     """
     raw = parse_facts(content, source_file="", topic_id="")
+    if not include_conflicts:
+        raw = [r for r in raw if not r["is_conflict"]]
     return [
         {
             "text": f"- {r['text']}",  # restore "- " prefix for callers that expect it
@@ -216,6 +220,22 @@ def _get_git_sha(repo_dir: Path | None = None) -> str | None:
     except Exception:
         pass
     return None
+
+
+# ---------------------------------------------------------------------------
+# Source path helper
+# ---------------------------------------------------------------------------
+
+def _display_source_path(path: "Path", memory_dir: "Path") -> str:
+    """Return a portable relative path for storing in WIKI_META / WikiFact.
+
+    Relative to memory_dir.parent so paths look like 'memory/topic-7301.md'.
+    Falls back to str(path) when path is not under memory_dir.parent.
+    """
+    try:
+        return str(path.relative_to(memory_dir.parent))
+    except ValueError:
+        return str(path)
 
 
 # ---------------------------------------------------------------------------
@@ -438,9 +458,10 @@ def main() -> int:
             header = parse_memory_header(content)
 
             # Parse with full provenance
+            source_path = _display_source_path(mf, memory_dir)
             wiki_facts = parse_facts(
                 content,
-                source_file=str(mf),
+                source_file=source_path,
                 topic_id=tid,
             )
             # Classify and attach fact_type
@@ -456,7 +477,7 @@ def main() -> int:
 
             # Build source files index entry
             source_files_index.append({
-                "path": str(mf),
+                "path": source_path,
                 "topic_id": tid,
                 "fact_count": len(wiki_facts),
                 "last_batch": last_batch,
