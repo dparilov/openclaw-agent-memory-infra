@@ -11,6 +11,7 @@ read-topic.py — Читает историю топика через Pyrogram u
   python3 scripts/context_access/read-topic.py 7301 --since-id 15800
   python3 scripts/context_access/read-topic.py 7301 --batch-format
   python3 scripts/context_access/read-topic.py 7301 --chat-id -1001234567890 --checkpoint-dir /tmp/cp
+  python3 scripts/context_access/read-topic.py 7301 --config .agent/config.yaml
 
 Выходные форматы:
   (default)       raw transcript — строки вида [DD.MM HH:MM] sender: text
@@ -18,9 +19,16 @@ read-topic.py — Читает историю топика через Pyrogram u
 
 Переменные окружения:
   OPENCLAW_AGENTS         путь к ~/.openclaw/agents/ (default: ~/.openclaw/agents)
-  OPENCLAW_CHECKPOINT_DIR путь к директории чекпоинтов (default: .agent/checkpoints/ или ~/.openclaw/workspace/ops)
+  OPENCLAW_CHECKPOINT_DIR путь к директории чекпоинтов (default: .agent/checkpoints/ или legacy)
   PYROGRAM_SESSION        путь к файлу .session (default: ~/.openclaw/workspace/ops/userbot)
   PYROGRAM_VENV           путь к site-packages pyrogram (auto-detect если не задан)
+
+Конфигурационный файл (.agent/config.yaml):
+  checkpoint_dir: ~/project/.agent/checkpoints
+  pyrogram_session: ~/.openclaw/workspace/ops/userbot
+  agents_base: ~/.openclaw/agents
+
+  Приоритет: CLI arg > env var > config file > auto-detect > legacy fallback
 """
 import argparse
 import asyncio
@@ -28,7 +36,7 @@ import importlib.util
 import os
 import re
 import sys
-import time
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -59,29 +67,98 @@ def detect_project_root(_script_path: "Path | None" = None) -> "Path | None":
 
 
 # ---------------------------------------------------------------------------
-# Path resolution
+# Config file
 # ---------------------------------------------------------------------------
 
-def find_pyrogram() -> "str | None":
+def load_agent_config(
+    config_path: "str | None" = None,
+    project_root: "Path | None" = None,
+    _script_path: "Path | None" = None,
+) -> dict:
+    """
+    Load .agent/config.yaml and return its contents as a dict.
+
+    Config file location priority:
+      1. config_path argument (from --config CLI arg)
+      2. project_root / .agent / config.yaml
+      3. Auto-detected project root (detect_project_root())
+
+    Returns empty dict if file not found, not readable, or not parseable.
+    Paths in values are NOT expanded here — callers apply .expanduser().
+
+    Supported keys:
+      checkpoint_dir    — directory for checkpoint files
+      pyrogram_session  — path to Pyrogram .session file
+      agents_base       — path to OpenClaw agents directory
+    """
+    if config_path:
+        p = Path(config_path).expanduser()
+    elif project_root:
+        p = Path(project_root) / ".agent" / "config.yaml"
+    else:
+        proj = detect_project_root(_script_path)
+        if proj:
+            p = proj / ".agent" / "config.yaml"
+        else:
+            return {}
+
+    if not p.exists():
+        return {}
+
+    try:
+        # Try PyYAML first (may not be installed)
+        import yaml  # type: ignore
+        return yaml.safe_load(p.read_text()) or {}
+    except ImportError:
+        pass
+    except Exception:
+        return {}
+
+    # Fallback: minimal "key: value" parser (no PyYAML dependency)
+    result: dict = {}
+    try:
+        for line in p.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if ":" in line:
+                k, _, v = line.partition(":")
+                k = k.strip()
+                v = v.strip()
+                if k and v:
+                    result[k] = v
+    except Exception:
+        return {}
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Path resolution helpers
+# ---------------------------------------------------------------------------
+
+def find_pyrogram(_script_path: "Path | None" = None) -> "str | None":
     """Locate pyrogram in known venv locations or system.
 
     Priority:
       1. PYROGRAM_VENV env var (explicit override)
       2. OpenClaw workspace .venv
       3. Project-local .venv (when running from .agent/tools/context_access/)
+
+    Args:
+        _script_path: Override __file__ for unit testing only.
     """
     candidates = []
     # 1. Explicit env var takes highest priority
     venv_env = os.environ.get("PYROGRAM_VENV", "")
     if venv_env:
-        candidates.append(Path(venv_env))
+        candidates.append(Path(venv_env).expanduser())
     # 2. OpenClaw workspace defaults
     candidates.extend([
         Path.home() / ".openclaw" / "workspace" / ".venv" / "lib" / "python3.12" / "site-packages",
         Path.home() / ".openclaw" / "workspace" / ".venv" / "lib" / "python3.11" / "site-packages",
     ])
     # 3. Project-local .venv (when running from .agent/tools/context_access/)
-    proj = detect_project_root()
+    proj = detect_project_root(_script_path)
     if proj:
         for pyver in ("3.12", "3.11", "3.10", "3.9"):
             candidates.append(proj / ".venv" / "lib" / f"python{pyver}" / "site-packages")
@@ -94,6 +171,7 @@ def find_pyrogram() -> "str | None":
 def resolve_checkpoint_dir(
     cli_arg: "str | None" = None,
     _script_path: "Path | None" = None,
+    _config: "dict | None" = None,
 ) -> Path:
     """
     Resolve the directory used for checkpoint files.
@@ -101,24 +179,101 @@ def resolve_checkpoint_dir(
     Priority:
       1. --checkpoint-dir CLI argument
       2. OPENCLAW_CHECKPOINT_DIR environment variable
-      3. Auto-detect: <project_root>/.agent/checkpoints/
+      3. config file: checkpoint_dir key
+      4. Auto-detect: <project_root>/.agent/checkpoints/
          (when script runs from .agent/tools/context_access/)
-      4. Legacy fallback: ~/.openclaw/workspace/ops
+      5. Legacy fallback: ~/.openclaw/workspace/ops
 
     Args:
-        cli_arg: Value from --checkpoint-dir CLI arg.
+        cli_arg:      Value from --checkpoint-dir CLI arg.
         _script_path: Override script path for unit testing only.
+        _config:      Pre-loaded config dict (avoids re-reading file in tests).
     """
     if cli_arg:
-        return Path(cli_arg)
+        return Path(cli_arg).expanduser()
     env = os.environ.get("OPENCLAW_CHECKPOINT_DIR")
     if env:
-        return Path(env)
+        return Path(env).expanduser()
+    cfg = _config if _config is not None else {}
+    cfg_val = cfg.get("checkpoint_dir")
+    if cfg_val:
+        return Path(cfg_val).expanduser()
     proj = detect_project_root(_script_path)
     if proj:
         return proj / ".agent" / "checkpoints"
     return Path.home() / ".openclaw" / "workspace" / "ops"
 
+
+def agents_base(
+    cli_arg: "str | None" = None,
+    _config: "dict | None" = None,
+) -> Path:
+    """
+    Resolve the agents base directory.
+
+    Priority:
+      1. --agents-base CLI argument
+      2. OPENCLAW_AGENTS environment variable
+      3. config file: agents_base key
+      4. Default: ~/.openclaw/agents
+    """
+    if cli_arg:
+        return Path(cli_arg).expanduser()
+    env = os.environ.get("OPENCLAW_AGENTS")
+    if env:
+        return Path(env).expanduser()
+    cfg = _config if _config is not None else {}
+    cfg_val = cfg.get("agents_base")
+    if cfg_val:
+        return Path(cfg_val).expanduser()
+    return Path.home() / ".openclaw" / "agents"
+
+
+def find_session_file(
+    session_file: "str | None" = None,
+    _config: "dict | None" = None,
+) -> "tuple[str, str]":
+    """
+    Locate userbot .session file.
+
+    Priority:
+      1. session_file parameter (from --session-file CLI arg)
+      2. PYROGRAM_SESSION environment variable
+      3. config file: pyrogram_session key
+      4. Default location: ~/.openclaw/workspace/ops/userbot.session
+      5. Glob search under ~/.openclaw/workspace/
+    """
+    explicit = session_file
+    if not explicit:
+        explicit = os.environ.get("PYROGRAM_SESSION")
+    if not explicit:
+        cfg = _config if _config is not None else {}
+        explicit = cfg.get("pyrogram_session")
+    if explicit:
+        p = Path(explicit).expanduser()
+        return str(p.parent), p.name.replace(".session", "")
+    default = Path.home() / ".openclaw" / "workspace" / "ops"
+    if (default / "userbot.session").exists():
+        return str(default), "userbot"
+    # search common locations
+    import glob
+    found = glob.glob(
+        str(Path.home() / ".openclaw" / "workspace" / "**" / "*.session"),
+        recursive=True,
+    )
+    if found:
+        p = Path(found[0])
+        return str(p.parent), p.stem
+    raise SystemExit(
+        "ERROR: userbot .session file not found. "
+        "Set PYROGRAM_SESSION env var, use --session-file, "
+        "or add pyrogram_session to .agent/config.yaml."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint I/O
+# ---------------------------------------------------------------------------
 
 def checkpoint_path(topic_id: str, checkpoint_dir: "Path | None" = None) -> Path:
     """Path to sub-batch checkpoint file for this topic."""
@@ -146,15 +301,34 @@ def save_checkpoint(
     sub_batch: int,
     checkpoint_dir: "Path | None" = None,
 ) -> None:
-    """Write checkpoint after processing a sub-batch."""
+    """Atomically write checkpoint after processing a sub-batch.
+
+    Uses temp file + os.replace so no partial write is ever visible.
+    Temp file is cleaned up on any write error.
+    """
     import json as _json
     cp = checkpoint_path(topic_id, checkpoint_dir)
-    cp.write_text(_json.dumps({
-        "topic_id": topic_id,
-        "last_message_id": last_message_id,
-        "sub_batch": sub_batch,
-        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    }, ensure_ascii=False))
+    content = _json.dumps(
+        {
+            "topic_id": topic_id,
+            "last_message_id": last_message_id,
+            "sub_batch": sub_batch,
+            "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+        ensure_ascii=False,
+    )
+    # Write to a sibling temp file, then atomically replace
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=cp.parent, suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        os.replace(tmp_path, cp)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
     print(
         f"[read-topic] Checkpoint saved: last_message_id={last_message_id} sub_batch={sub_batch}",
         file=sys.stderr,
@@ -166,46 +340,6 @@ def clear_checkpoint(topic_id: str, checkpoint_dir: "Path | None" = None) -> Non
     if cp.exists():
         cp.unlink()
         print(f"[read-topic] Checkpoint cleared for topic {topic_id}", file=sys.stderr)
-
-
-def agents_base(cli_arg: "str | None" = None) -> Path:
-    """
-    Resolve the agents base directory.
-
-    Priority:
-      1. --agents-base CLI argument
-      2. OPENCLAW_AGENTS environment variable
-      3. Default: ~/.openclaw/agents
-    """
-    if cli_arg:
-        return Path(cli_arg)
-    return Path(os.environ.get("OPENCLAW_AGENTS", str(Path.home() / ".openclaw" / "agents")))
-
-
-def find_session_file(session_file: "str | None" = None) -> "tuple[str, str]":
-    """
-    Locate userbot .session file.
-
-    Priority:
-      1. session_file parameter (from --session-file CLI arg)
-      2. PYROGRAM_SESSION environment variable
-      3. Default location: ~/.openclaw/workspace/ops/userbot.session
-      4. Glob search under ~/.openclaw/workspace/
-    """
-    explicit = session_file or os.environ.get("PYROGRAM_SESSION")
-    if explicit:
-        p = Path(explicit)
-        return str(p.parent), p.name.replace(".session", "")
-    default = Path.home() / ".openclaw" / "workspace" / "ops"
-    if (default / "userbot.session").exists():
-        return str(default), "userbot"
-    # search common locations
-    import glob
-    found = glob.glob(str(Path.home() / ".openclaw" / "workspace" / "**" / "*.session"), recursive=True)
-    if found:
-        p = Path(found[0])
-        return str(p.parent), p.stem
-    raise SystemExit("ERROR: userbot .session file not found. Set PYROGRAM_SESSION env var or use --session-file.")
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +365,7 @@ def discover_chat_id(topic_id: str, base: Path) -> "str | None":
     """Extract Telegram chat_id from session files for this topic."""
     import glob
     patterns = [str(base / "*" / "sessions" / f"*-topic-{topic_id}.jsonl")]
-    paths = []
+    paths: list = []
     for p in patterns:
         paths.extend(glob.glob(p))
     if not paths:
@@ -265,7 +399,7 @@ async def fetch_messages(
     from pyrogram.errors import FloodWait
 
     app = Client(session_name, workdir=workdir)
-    messages = []
+    messages: list = []
 
     max_retries = 4
     for attempt in range(max_retries):
@@ -273,7 +407,6 @@ async def fetch_messages(
             async with app:
                 fetch_limit = min(limit * 4, 10000)  # fetch extra, filter by topic
                 async for msg in app.get_chat_history(chat_id, limit=fetch_limit):
-                    # filter by topic thread
                     thread_id = (
                         getattr(msg, "message_thread_id", None)
                         or getattr(msg, "reply_to_message_id", None)
@@ -285,7 +418,6 @@ async def fetch_messages(
                         if msg.id != topic_id and thread_id != topic_id:
                             continue
 
-                    # delta filter
                     if since_id is not None and msg.id <= since_id:
                         continue
 
@@ -339,8 +471,7 @@ def print_raw(messages: list, chat_id: int, topic_id: int) -> None:
 
 
 def print_batch_format(messages: list, chat_id: int, topic_id: int) -> None:
-    """Output as structured transcript block, suitable for LLM fact-extraction
-    and downstream piping into archive-batch-v2.py --batch."""
+    """Output structured transcript block for downstream piping into archive-batch-v2.py."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     print(f"## Transcript — {now}")
     print(f"## Source: telegram:{chat_id}:{topic_id} | messages: {len(messages)}")
@@ -359,7 +490,7 @@ def print_batch_format(messages: list, chat_id: int, topic_id: int) -> None:
     print()
     print("## END TRANSCRIPT")
     if messages:
-        print(f"# Pipe this output to fact-extraction, then: archive-batch-v2.py <topic> --write", file=sys.stderr)
+        print("# Pipe this output to fact-extraction, then: archive-batch-v2.py <topic> --write", file=sys.stderr)
         print(f"# last-message-id: {messages[-1][1]}", file=sys.stderr)
 
 
@@ -377,31 +508,36 @@ def main():
     parser.add_argument("--chat-id", type=str, default=None, help="Override chat_id (skip auto-discovery)")
     parser.add_argument("--batch-format", action="store_true", help="Output structured transcript for write-pipeline")
     parser.add_argument("--sub-batch-size", type=int, default=200,
-                        help="Max messages per output sub-batch (default: 200). If more fetched, "
-                             "outputs first sub-batch and writes checkpoint for --resume.")
+                        help="Max messages per output sub-batch (default: 200).")
     parser.add_argument("--resume", action="store_true",
                         help="Resume from checkpoint: use last saved message ID as --since-id.")
     parser.add_argument("--clear-checkpoint", action="store_true",
                         help="Clear checkpoint file for this topic and exit.")
     # Portable path overrides
+    parser.add_argument("--config", default=None,
+                        help="Path to .agent/config.yaml. "
+                             "Auto-detected from project root when running from .agent/tools/context_access/.")
     parser.add_argument("--checkpoint-dir", default=None,
                         help="Directory for checkpoint files. "
-                             "Overrides OPENCLAW_CHECKPOINT_DIR env var and auto-detection. "
+                             "Overrides OPENCLAW_CHECKPOINT_DIR env var and config. "
                              "Auto-detected as .agent/checkpoints/ when running from project tree.")
     parser.add_argument("--agents-base", default=None,
                         help="Path to OpenClaw agents dir. "
-                             "Overrides OPENCLAW_AGENTS env var (default: ~/.openclaw/agents).")
+                             "Overrides OPENCLAW_AGENTS env var and config (default: ~/.openclaw/agents).")
     parser.add_argument("--session-file", default=None,
                         help="Path to Pyrogram .session file. "
-                             "Overrides PYROGRAM_SESSION env var.")
+                             "Overrides PYROGRAM_SESSION env var and config.")
     args = parser.parse_args()
 
+    # Load config first (used as fallback in all resolver functions)
+    cfg = load_agent_config(config_path=args.config)
+
     # Resolve portable paths up front
-    cp_dir = resolve_checkpoint_dir(args.checkpoint_dir)
-    base = agents_base(args.agents_base)
+    cp_dir = resolve_checkpoint_dir(args.checkpoint_dir, _config=cfg)
+    base = agents_base(args.agents_base, _config=cfg)
     ab = import_archive_batch()
 
-    # Handle --clear-checkpoint early (before resolution if possible)
+    # Handle --clear-checkpoint early
     if args.clear_checkpoint:
         topic_id_str_early = ab.resolve_topic_id(args.topic, base)
         clear_checkpoint(topic_id_str_early, cp_dir)
@@ -435,7 +571,7 @@ def main():
         sys.path.insert(0, venv)
 
     # 4. locate session file
-    workdir, session_name = find_session_file(args.session_file)
+    workdir, session_name = find_session_file(args.session_file, _config=cfg)
 
     print(
         f"[read-topic] chat={chat_id_int} topic={topic_id_int} limit={args.limit} since_id={args.since_id}",
