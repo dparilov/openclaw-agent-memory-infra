@@ -267,6 +267,20 @@ def format_provenance(fact: WikiFact) -> str:
     return "  _Source: " + " · ".join(parts) + "_"
 
 
+def render_fact_bullet(fact: WikiFact) -> str:
+    """Return a markdown bullet line for a fact, without provenance tail.
+
+    Avoids double-prefixing ⚠️ when parse_facts() already stored the
+    conflict marker inside fact["text"].
+    """
+    text = fact["text"]
+    if fact["is_conflict"]:
+        if text.startswith("⚠️"):
+            return f"- {text}"
+        return f"- ⚠️ {text}"
+    return f"- {text}"
+
+
 # ---------------------------------------------------------------------------
 # Wiki page builders
 # ---------------------------------------------------------------------------
@@ -288,7 +302,7 @@ def build_topic_page(
     title = topic_name_from_file(memory_file)
 
     if wiki_facts is None:
-        wf_local = parse_facts(content, source_file=str(memory_file), topic_id=topic_id)
+        wf_local = parse_facts(content, source_file=memory_file.name, topic_id=topic_id)
         for wf in wf_local:
             wf["fact_type"] = classify_fact(wf["text"])
     else:
@@ -329,7 +343,7 @@ def build_topic_page(
             lines.append(section_titles[section])
             lines.append("")
             for f in by_type[section]:
-                lines.append(f"- {f['text']}")
+                lines.append(render_fact_bullet(f))
                 lines.append(format_provenance(f))
                 lines.append("")
             lines.append("")
@@ -339,7 +353,7 @@ def build_topic_page(
         lines.append("## ⚠️ Conflicts")
         lines.append("")
         for f in conflicts:
-            lines.append(f"- ⚠️ {f['text']}")
+            lines.append(render_fact_bullet(f))
             lines.append(format_provenance(f))
             lines.append("")
         lines.append("")
@@ -401,7 +415,7 @@ def build_by_type_pages(
             lines.append(f"## Topic {tid}")
             lines.append("")
             for f in tfacts:
-                lines.append(f"- {f['text']}")
+                lines.append(render_fact_bullet(f))
                 lines.append(format_provenance(f))
                 lines.append("")
             lines.append("")
