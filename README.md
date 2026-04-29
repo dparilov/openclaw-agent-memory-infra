@@ -36,15 +36,11 @@ L4  Canonical Docs docs/ + .agent/AGENT_CONTEXT.md  Architecture, runbooks, ADR
 
 ## First Time? Start Here
 
-If you are setting up on a new machine or a new OpenClaw environment, verify your environment
-before running anything else:
+→ **[Full Environment Onboarding](docs/FULL_ENVIRONMENT_ONBOARDING.md)** — complete VPS-to-handoff setup checklist (OS, packages, GitHub, OpenClaw, Telegram, models).
+→ **[Bootstrap Prerequisites](docs/BOOTSTRAP_PREREQUISITES.md)** — concise prerequisites-only checklist if your environment is already set up.
 
-```
-docs/BOOTSTRAP_PREREQUISITES.md
-```
-
-This document can be used with any external assistant (ChatGPT, Claude web, etc.) to walk
-through prerequisites step by step and produce an explicit READY / NOT READY verdict.
+Both documents can be used with any external assistant (ChatGPT, Claude web, etc.) to walk
+through setup step by step and produce an explicit READY / NOT READY verdict.
 
 ---
 

@@ -36,6 +36,7 @@ Agent infers:  Topic, last-write timestamp, staleness.
 May ask:       Confirm recovery scope if multiple topics.
 Output:        Full L2–L4 context reload + staleness report.
 ```
+> Rebuilds the baseline index and applies recent deltas. Not a full historical catch-up.
 
 ### READ L0
 ```
@@ -99,6 +100,7 @@ Agent infers:  Topic, session ID, memory dir.
 May ask:       Confirm batch content before write if uncertain.
 Output:        Updated topic-<id>.md, batch appended.
 ```
+> Not for bulk historical archiving. Use for incremental context snapshots only.
 
 ### CREATE CANDIDATES
 ```
@@ -108,6 +110,7 @@ Agent infers:  Source batch, topic, memory dir.
 May ask:       Which batch or session if not specified.
 Output:        YAML candidates written to .agent/memory/candidates/.
 ```
+> Explicit candidate workflow — not the default path for new topics. Default is automatic initial indexing.
 
 ### PROMOTE AUTO
 ```
@@ -117,6 +120,7 @@ Agent infers:  Topic from context.
 May ask:       Which topic or all topics.
 Output:        Promotion report; pending-approval items listed.
 ```
+> Same caveat as CREATE CANDIDATES — use only when explicit promotion is warranted.
 
 ### APPROVE CANDIDATE
 ```
@@ -225,6 +229,7 @@ Agent infers:  Project paths, memory-dir.
 May ask:       None (all paths from config).
 Output:        pytest + smoke + validate-wiki results; GO / STOP verdict.
 ```
+> Verifies baseline index exists. If absent, run RECOVER MEMORY first.
 
 ---
 

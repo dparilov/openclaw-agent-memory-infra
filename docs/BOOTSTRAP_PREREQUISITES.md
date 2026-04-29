@@ -1,5 +1,10 @@
 # Bootstrap Prerequisites Checklist
 
+> **New to this environment?** Start with the full checklist:
+> → [Full Environment Onboarding](FULL_ENVIRONMENT_ONBOARDING.md) covers OS, packages,
+> GitHub, OpenClaw install, Telegram, model providers, and ready-for-handoff report.
+> Return here for the concise prerequisites-only view.
+
 Environment readiness check before onboarding a project into the OpenClaw memory system.
 
 **This document is for external operators and external assistants.**
