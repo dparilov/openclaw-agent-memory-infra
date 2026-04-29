@@ -1,5 +1,10 @@
 # Automatic Initial Indexing
 
+> **Status: product design contract.**  
+> The runtime indexer is not implemented in this PR.  
+> Until implementation lands, infra agents must treat this document as the required behavior
+> and report when a step is simulated or unavailable.
+
 ## Core Principle
 
 When an agent first encounters a topic with existing session history, it **automatically**  
@@ -15,8 +20,8 @@ Automatic indexing is the **default path**. Manual migration (see
 
 No new commands are added. Automatic indexing happens as a side effect of:
 
-| Existing command | When indexing triggers |
-|-----------------|----------------------|
+| Existing command | Intended indexing behavior |
+|-----------------|--------------------------|
 | Agent starts on a topic | On first turn if no baseline index exists |
 | `RECOVER MEMORY` | Rebuilds baseline index + applies deltas |
 | `PRE-LIVE CHECK` | Detects missing baseline, triggers index if absent |
@@ -50,7 +55,7 @@ After indexing, the agent writes to `.agent/memory/index/topic-<id>/`:
 |----------|------------------------|
 | `.agent/AGENT_CONTEXT.md` | **YES** — always commit |
 | `.agent/handoffs/` | **YES** — always commit |
-| `.agent/memory/reports/` | **YES** — always commit |
+| `.agent/memory/reports/` | **YES, after human review** — do not commit reports containing secret values or unreviewed sensitive findings |
 | `.agent/memory/candidates/` | **NO** — do not commit by default |
 | `.agent/memory/raw/` | **NO** — do not commit |
 | `.agent/memory/index/` | **NO** — do not commit |

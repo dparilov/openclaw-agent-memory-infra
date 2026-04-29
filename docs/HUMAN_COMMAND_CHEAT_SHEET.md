@@ -36,7 +36,7 @@ Agent infers:  Topic, last-write timestamp, staleness.
 May ask:       Confirm recovery scope if multiple topics.
 Output:        Full L2–L4 context reload + staleness report.
 ```
-> Rebuilds the baseline index and applies recent deltas. Not a full historical catch-up.
+> Target behavior: rebuilds/updates baseline index when indexing support is available; otherwise the agent must report that indexing is not implemented and use read-only recovery.
 
 ### READ L0
 ```
