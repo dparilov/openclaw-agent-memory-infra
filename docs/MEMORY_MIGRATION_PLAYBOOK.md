@@ -1,5 +1,19 @@
 # Memory Migration Playbook
 
+> ⚠️ **Manual migration is an advanced, exceptional workflow.**
+>
+> **When to use:** you have pre-existing session history that the agent has never seen,
+> AND automatic initial indexing (see `docs/AUTOMATIC_INITIAL_INDEXING.md`) is not
+> sufficient — e.g., the history is too large, contains known sensitive data, or requires
+> human curation before any indexing occurs.
+>
+> **When NOT to use:** for normal first-time setup, new topics, or routine memory
+> recovery. Use `RECOVER MEMORY` instead (see `docs/HUMAN_COMMAND_CHEAT_SHEET.md`).
+>
+> **Product repo artifact policy:** raw session data, candidate files, index artifacts,
+> and wiki drafts are NOT committed to product repos by default. Only commit
+> `.agent/AGENT_CONTEXT.md`, `.agent/handoffs/`, and `.agent/memory/reports/`.
+
 Safe staged process for migrating existing project history into the OpenClaw memory system.
 
 Run this playbook when onboarding a project that already has agent work, session history,
