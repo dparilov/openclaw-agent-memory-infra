@@ -128,14 +128,34 @@ If Codex is not part of your stack, mark this N/A.
 
 ---
 
-## I. MeridianA Reproducibility Gap (known limitation)
+## I. MeridianA Install (required for `meridiana/*` model aliases)
 
-> **Note:** MeridianA is not currently vendored in this repo.  
-> If you rely on MeridianA for memory provenance, the exact model version used  
-> during session indexing may not be reproducible from this repo alone.  
-> Document the MeridianA version in your handoff notes.
+MeridianA is a patched local proxy (`@rynfar/meridian` v1.30.2 + OpenClaw adapter).
+Required for agents using `meridiana/claude-opus-4-7` or similar aliases.
 
-No gate — awareness only.
+```bash
+# Install MeridianA (builds locally from public npm + vendored patch)
+bash scripts/install-meridiana.sh --target ~/meridiana-openclaw --port 3470
+
+# After install, authenticate Claude Max account (once per machine):
+node ~/meridiana-openclaw/dist/cli.js profile add
+# Follow browser OAuth prompt. Do NOT copy tokens between machines.
+
+# Start the proxy:
+MERIDIAN_PORT=3470 node ~/meridiana-openclaw/dist/cli.js
+```
+
+Requirements: Node.js >= 22, npm, GNU patch (`sudo apt-get install patch`).
+`bun` is installed automatically if missing.
+
+| Check | Command | Expected |
+|-------|---------|----------|
+| Proxy running | `curl -s http://127.0.0.1:3470/v1/models` | JSON models list |
+| Auth complete | `node ~/meridiana-openclaw/dist/cli.js profile list` | at least one profile |
+
+See `docs/MERIDIANA_DEPENDENCY.md` for model alias configuration and troubleshooting.
+
+**Gate I: PASS** — proxy responds on port 3470 and at least one Claude Max profile is active.
 
 ---
 

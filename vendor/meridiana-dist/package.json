@@ -1,0 +1,28 @@
+{
+  "name": "@dparilov/meridiana-openclaw",
+  "version": "1.30.2",
+  "description": "MeridianA: patched @rynfar/meridian proxy for OpenClaw. Pre-built dist. MIT license (base: rynfar/meridian).",
+  "type": "module",
+  "bin": {
+    "meridiana": "./cli.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.2.89",
+    "ws": "8.20.0"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dparilov/openclaw-agent-memory-infra"
+  },
+  "_meridiana": {
+    "base": "@rynfar/meridian",
+    "baseVersion": "1.30.2",
+    "baseLicense": "MIT",
+    "patchSource": "patches/meridiana-openclaw.patch",
+    "patchDescription": "OpenClaw adapter + SDK tool mapping + passthrough suppression (6 commits over upstream)"
+  }
+}
