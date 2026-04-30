@@ -1,14 +1,22 @@
-"""Tests for scripts/install-meridiana.sh and patches/meridiana-openclaw.patch.
+"""Tests for scripts/install-meridiana.sh (vendored-dist approach).
 
-All tests are non-network: no npm/bun calls, no actual install performed.
+All tests are non-network: no npm calls, no actual install performed.
+The install script copies pre-built JS from vendor/meridiana-dist/ and then
+runs `npm install --omit=dev` for runtime deps.  No bun, no build step.
+
+patches/meridiana-openclaw.patch remains in the repo as a documentation
+artifact (historical record of the 6-commit OpenClaw diff).
 """
+import json
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).parent.parent
 SCRIPT = REPO / "scripts" / "install-meridiana.sh"
+VENDOR_DIR = REPO / "vendor" / "meridiana-dist"
 PATCH = REPO / "patches" / "meridiana-openclaw.patch"
 
 
@@ -29,42 +37,62 @@ def test_script_exists_and_is_executable():
     assert os.access(SCRIPT, os.X_OK), "install-meridiana.sh must be executable"
 
 
-# ── 2. Patch file exists and is non-empty ────────────────────────────────────
+# ── 2. Vendor directory exists with expected files ───────────────────────────
 
-def test_patch_file_exists_and_nonempty():
-    assert PATCH.exists(), "patches/meridiana-openclaw.patch must exist"
+def test_vendor_dir_exists_with_cli():
+    assert VENDOR_DIR.exists(), f"vendor dir must exist: {VENDOR_DIR}"
+    cli = VENDOR_DIR / "cli.js"
+    assert cli.exists(), "vendor/meridiana-dist/cli.js must exist"
+
+
+def test_vendor_dir_has_js_files():
+    js_files = list(VENDOR_DIR.glob("*.js"))
+    assert len(js_files) >= 10, (
+        f"vendor dir must have ≥10 JS files, found {len(js_files)}"
+    )
+
+
+# ── 3. Vendor package.json has correct structure ──────────────────────────────
+
+def test_vendor_package_json_has_runtime_deps():
+    pkg_path = VENDOR_DIR / "package.json"
+    assert pkg_path.exists(), "vendor/meridiana-dist/package.json must exist"
+    pkg = json.loads(pkg_path.read_text())
+    deps = pkg.get("dependencies", {})
+    assert "@anthropic-ai/claude-agent-sdk" in deps, (
+        "package.json must declare @anthropic-ai/claude-agent-sdk dependency"
+    )
+    assert "ws" in deps, "package.json must declare ws dependency"
+
+
+def test_vendor_package_json_version():
+    pkg = json.loads((VENDOR_DIR / "package.json").read_text())
+    assert pkg.get("version") == "1.30.2", (
+        f"vendor package.json must pin version 1.30.2, got {pkg.get('version')!r}"
+    )
+
+
+def test_vendor_package_json_mit_attribution():
+    pkg = json.loads((VENDOR_DIR / "package.json").read_text())
+    meridiana = pkg.get("_meridiana", {})
+    assert "MIT" in meridiana.get("baseLicense", ""), (
+        "package.json _meridiana.baseLicense must mention MIT"
+    )
+
+
+# ── 4. Patch file kept as documentation artifact ──────────────────────────────
+
+def test_patch_doc_artifact_exists_and_nonempty():
+    """The patch file is kept as historical documentation, not applied during install."""
+    assert PATCH.exists(), (
+        "patches/meridiana-openclaw.patch must exist as documentation artifact"
+    )
     content = PATCH.read_text()
     assert len(content) > 100, "patch file must be non-empty"
+    assert "diff --git" in content, "patch file must be a valid git diff"
 
 
-# ── 3. Patch file targets expected source files ───────────────────────────────
-
-def test_patch_targets_expected_files():
-    content = PATCH.read_text()
-    expected = [
-        "src/proxy/adapters/openclaw.ts",
-        "src/proxy/adapter.ts",
-        "src/proxy/server.ts",
-    ]
-    for path in expected:
-        assert path in content, f"patch must reference {path}"
-
-
-# ── 4. Patch file has valid diff header ───────────────────────────────────────
-
-def test_patch_has_valid_diff_header():
-    content = PATCH.read_text()
-    assert content.startswith("diff --git"), "patch must start with 'diff --git'"
-
-
-# ── 5. Patch mentions OpenClaw adapter ────────────────────────────────────────
-
-def test_patch_contains_openclaw_adapter():
-    content = PATCH.read_text()
-    assert "openclaw" in content.lower(), "patch must reference openclaw adapter"
-
-
-# ── 6. --help exits 0 and mentions required flags ────────────────────────────
+# ── 5. --help exits 0 and documents all flags ────────────────────────────────
 
 def test_help_exits_zero_and_has_flags():
     r = run_script("--help")
@@ -75,72 +103,68 @@ def test_help_exits_zero_and_has_flags():
     assert "--port" in out, "--help must mention --port"
 
 
-# ── 7. --dry-run exits 2 when patch file is present ──────────────────────────
+# ── 6. --dry-run exits exactly 2 when node/npm and vendor are present ─────────
 
-def test_dry_run_exits_2_when_requirements_met():
-    # In CI, node/npm/patch may be present; dry-run should reach end and exit 2.
-    # If a requirement is genuinely missing, the script exits 1 — that's OK too.
+def test_dry_run_exits_2():
+    """When node, npm, and vendor dir are all present, --dry-run must exit 2."""
+    if not shutil.which("node") or not shutil.which("npm"):
+        import pytest
+        pytest.skip("node/npm not available in this environment")
     r = run_script("--dry-run", "--target", "/tmp/test-meridiana-dryrun")
-    assert r.returncode in (0, 1, 2), (
-        f"dry-run must exit 0, 1, or 2; got {r.returncode}\n{r.stderr}"
+    assert r.returncode == 2, (
+        f"--dry-run must exit 2 (dry-run complete), got {r.returncode}\n"
+        f"stdout: {r.stdout}\nstderr: {r.stderr}"
     )
-    # Must not have actually created anything
+    # Must not have created anything
     assert not Path("/tmp/test-meridiana-dryrun/dist/cli.js").exists(), (
-        "dry-run must not install dist/cli.js"
+        "--dry-run must not create dist/cli.js"
     )
 
 
-# ── 8. --dry-run output mentions patch file ───────────────────────────────────
+# ── 7. --dry-run output shows [dry-run] markers and mentions vendor ────────────
 
-def test_dry_run_mentions_patch():
+def test_dry_run_output_markers():
     r = run_script("--dry-run", "--target", "/tmp/test-meridiana-dryrun2")
-    combined = r.stdout + r.stderr
-    assert "patch" in combined.lower(), (
-        f"dry-run output must mention patch file\n{combined}"
-    )
-
-
-# ── 9. --dry-run does not call npm, bun, or node for download ─────────────────
-
-def test_dry_run_does_not_download():
-    """dry-run must print intentions only; no real downloads or builds."""
-    r = run_script("--dry-run", "--target", "/tmp/test-meridiana-dryrun3")
-    # The output should say [dry-run] before any install step
     assert "[dry-run]" in r.stdout, (
-        f"dry-run output must contain '[dry-run]' markers\n{r.stdout}"
+        f"--dry-run output must contain '[dry-run]' markers\n{r.stdout}"
+    )
+    combined = r.stdout + r.stderr
+    # Should mention copying from vendor or dist
+    assert any(word in combined.lower() for word in ("vendor", "dist", "copy")), (
+        f"--dry-run output must mention vendor/dist/copy\n{combined}"
     )
 
 
-# ── 10. Script fails fast with clear message if patch file is missing ─────────
+# ── 8. Script fails fast with clear message when vendor dir is missing ─────────
 
-def test_fails_fast_if_patch_missing():
-    """Point REPO_ROOT somewhere that has no patch file."""
+def test_fails_fast_if_vendor_dir_missing():
+    """Script must exit 1 if run from a dir with no vendor/meridiana-dist/."""
     with tempfile.TemporaryDirectory() as tmp:
-        # Create a fake repo root with no patches dir
         fake_scripts = Path(tmp) / "scripts"
         fake_scripts.mkdir()
-        import shutil
         shutil.copy(SCRIPT, fake_scripts / "install-meridiana.sh")
+        # No vendor dir created → script should fail
         r = subprocess.run(
             ["bash", str(fake_scripts / "install-meridiana.sh"), "--dry-run"],
             capture_output=True, text=True,
         )
     assert r.returncode == 1, (
-        f"Should exit 1 when patch file is missing, got {r.returncode}"
+        f"Should exit 1 when vendor dir is missing, got {r.returncode}"
     )
-    assert "patch" in (r.stdout + r.stderr).lower(), (
-        "Error message must mention 'patch'"
+    combined = r.stdout + r.stderr
+    assert any(word in combined.lower() for word in ("vendor", "dist", "cli.js")), (
+        f"Error must mention vendor/dist/cli.js\n{combined}"
     )
 
 
-# ── 11. MIT license attribution present in patch or script ────────────────────
+# ── 9. MIT license attribution present in install script ──────────────────────
 
 def test_mit_license_attributed():
-    script_content = SCRIPT.read_text()
-    assert "MIT" in script_content, "install script must attribute MIT license"
+    content = SCRIPT.read_text()
+    assert "MIT" in content, "install script must attribute MIT license"
 
 
-# ── 12. Script does not contain secrets or tokens ────────────────────────────
+# ── 10. Script does not contain secrets or tokens ────────────────────────────
 
 def test_script_has_no_secrets():
     content = SCRIPT.read_text()
@@ -150,13 +174,13 @@ def test_script_has_no_secrets():
         )
 
 
-# ── 13. AUTH_COMMAND is documented in script ─────────────────────────────────
+# ── 11. Auth command documented in script ─────────────────────────────────────
 
 def test_auth_command_documented():
     content = SCRIPT.read_text()
     assert "profile add" in content, (
         "install script must document 'profile add' as the auth command"
     )
-    assert "OAuth" in content or "oauth" in content.lower() or "token" in content.lower(), (
+    assert any(w in content for w in ("OAuth", "oauth", "token", "Token")), (
         "install script must mention OAuth/token auth"
     )

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# install-meridiana.sh — Install MeridianA: patched @rynfar/meridian proxy for OpenClaw.
+# install-meridiana.sh — Install MeridianA proxy for OpenClaw.
 #
-# MeridianA = @rynfar/meridian v1.30.2 + OpenClaw compatibility patch.
-# The patch (patches/meridiana-openclaw.patch) is vendored in this repo.
+# MeridianA = @rynfar/meridian v1.30.2 with OpenClaw compatibility patches,
+# distributed as a pre-built dist in vendor/meridiana-dist/.
 # Base package license: MIT (https://github.com/rynfar/meridian).
 #
 # Usage:
@@ -17,12 +17,11 @@
 # Requirements (checked at startup):
 #   - Node.js >= 22
 #   - npm (any recent version)
-#   - bun  (installed automatically if missing)
-#   - patch (GNU patch, from system package manager)
-#   - Internet access to registry.npmjs.org
+#
+# No bun required. No build step. Pre-built dist is vendored in this repo.
 #
 # After successful install:
-#   1. Authenticate Claude Max account:
+#   1. Authenticate Claude Max account (run once per machine, requires browser):
 #        node <target>/dist/cli.js profile add
 #   2. Start the proxy:
 #        MERIDIAN_PORT=3470 node <target>/dist/cli.js
@@ -37,10 +36,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PATCH_FILE="${REPO_ROOT}/patches/meridiana-openclaw.patch"
+VENDOR_DIR="${REPO_ROOT}/vendor/meridiana-dist"
 
-BASE_PKG="@rynfar/meridian"
-BASE_VERSION="1.30.2"
 DEFAULT_TARGET="${HOME}/meridiana-openclaw"
 DEFAULT_PORT=3470
 
@@ -61,7 +58,6 @@ for arg in "$@"; do
   esac
 done
 
-# Parse key=value style args
 i=0
 args=("$@")
 while [[ $i -lt ${#args[@]} ]]; do
@@ -72,23 +68,20 @@ while [[ $i -lt ${#args[@]} ]]; do
   esac
 done
 
-_log()  { echo "  [meridiana] $*"; }
 _ok()   { echo "  OK    $*"; }
 _fail() { echo "  FAIL  $*" >&2; exit 1; }
 _dry()  { echo "  [dry-run] $*"; }
 
 echo "── MeridianA installer ─────────────────────────────────────────────"
-echo "  base:    ${BASE_PKG}@${BASE_VERSION}"
+echo "  source:  ${VENDOR_DIR}"
 echo "  target:  ${TARGET}"
 echo "  port:    ${PORT}"
-echo "  patch:   ${PATCH_FILE}"
 [[ $DRY_RUN -eq 1 ]] && echo "  mode:    DRY RUN — nothing will be modified"
 echo "────────────────────────────────────────────────────────────────────"
 
 # ── Step 1: Check requirements ────────────────────────────────────────────────
 echo "Step 1: Check requirements"
 
-# Node >= 22
 if ! command -v node >/dev/null 2>&1; then
   _fail "node not found. Install Node.js >= 22 from https://nodejs.org"
 fi
@@ -98,122 +91,80 @@ if [[ $NODE_MAJOR -lt 22 ]]; then
 fi
 _ok "node $(node --version)"
 
-# npm
 if ! command -v npm >/dev/null 2>&1; then
   _fail "npm not found. Install Node.js with npm from https://nodejs.org"
 fi
 _ok "npm $(npm --version)"
 
-# patch
-if ! command -v patch >/dev/null 2>&1; then
-  _fail "GNU patch not found. Install with: sudo apt-get install patch"
+if [[ ! -d "${VENDOR_DIR}" ]]; then
+  _fail "vendor directory not found: ${VENDOR_DIR}. Run from openclaw-agent-memory-infra repo root."
 fi
-_ok "patch $(patch --version | head -1)"
-
-# Patch file
-if [[ ! -f "${PATCH_FILE}" ]]; then
-  _fail "patch file not found: ${PATCH_FILE}"
+if [[ ! -f "${VENDOR_DIR}/cli.js" ]]; then
+  _fail "cli.js not found in ${VENDOR_DIR}. Repo may be incomplete."
 fi
-_ok "patch file: ${PATCH_FILE} ($(wc -l < "${PATCH_FILE}") lines)"
+_ok "vendor dir: ${VENDOR_DIR} ($(ls "${VENDOR_DIR}"/*.js | wc -l) JS files)"
 
-# bun (auto-install if missing)
-if ! command -v bun >/dev/null 2>&1; then
-  _log "bun not found — installing via official installer..."
-  if [[ $DRY_RUN -eq 1 ]]; then
-    _dry "would run: curl -fsSL https://bun.sh/install | bash"
+# ── Step 2: Create target directory ───────────────────────────────────────────
+echo "Step 2: Create target directory"
+if [[ $DRY_RUN -eq 1 ]]; then
+  _dry "would create: ${TARGET}/dist/"
+else
+  mkdir -p "${TARGET}/dist"
+  _ok "directory ready: ${TARGET}"
+fi
+
+# ── Step 3: Copy vendored dist ────────────────────────────────────────────────
+echo "Step 3: Copy pre-built dist"
+if [[ $DRY_RUN -eq 1 ]]; then
+  _dry "would copy: ${VENDOR_DIR}/*.js → ${TARGET}/dist/"
+  _dry "would copy: ${VENDOR_DIR}/package.json → ${TARGET}/package.json"
+else
+  cp "${VENDOR_DIR}"/*.js "${TARGET}/dist/"
+  cp "${VENDOR_DIR}/package.json" "${TARGET}/package.json"
+  _ok "dist copied: $(ls "${TARGET}/dist/"*.js | wc -l) JS files"
+fi
+
+# ── Step 4: Install runtime dependencies ──────────────────────────────────────
+echo "Step 4: Install runtime dependencies"
+if [[ $DRY_RUN -eq 1 ]]; then
+  _dry "would run: npm install in ${TARGET}"
+else
+  cd "${TARGET}"
+  npm install --omit=dev --prefer-offline 2>/dev/null || npm install --omit=dev
+  _ok "node_modules installed"
+fi
+
+# ── Step 5: Smoke test ────────────────────────────────────────────────────────
+echo "Step 5: Smoke test"
+if [[ $DRY_RUN -eq 1 ]]; then
+  _dry "would run: node ${TARGET}/dist/cli.js --help"
+else
+  if node "${TARGET}/dist/cli.js" --help 2>&1 | grep -q "meridian"; then
+    _ok "cli.js responds to --help"
   else
-    curl -fsSL https://bun.sh/install | bash
-    export PATH="${HOME}/.bun/bin:${PATH}"
-    if ! command -v bun >/dev/null 2>&1; then
-      _fail "bun install failed. Install manually: https://bun.sh"
-    fi
-  fi
-fi
-if command -v bun >/dev/null 2>&1; then
-  _ok "bun $(bun --version)"
-fi
-
-# ── Step 2: Prepare target directory ─────────────────────────────────────────
-echo "Step 2: Prepare target directory"
-if [[ $DRY_RUN -eq 1 ]]; then
-  _dry "would create: ${TARGET}"
-else
-  mkdir -p "${TARGET}"
-  _ok "target directory ready: ${TARGET}"
-fi
-
-# ── Step 3: Download base package ────────────────────────────────────────────
-echo "Step 3: Download ${BASE_PKG}@${BASE_VERSION}"
-if [[ $DRY_RUN -eq 1 ]]; then
-  _dry "would run: npm pack ${BASE_PKG}@${BASE_VERSION} in ${TARGET}"
-else
-  cd "${TARGET}"
-  TARBALL=$(npm pack "${BASE_PKG}@${BASE_VERSION}" 2>/dev/null)
-  _ok "downloaded: ${TARBALL}"
-  tar xzf "${TARBALL}" --strip-components=1
-  rm -f "${TARBALL}"
-  _ok "source extracted to ${TARGET}"
-fi
-
-# ── Step 4: Apply OpenClaw compatibility patch ────────────────────────────────
-echo "Step 4: Apply OpenClaw compatibility patch"
-if [[ $DRY_RUN -eq 1 ]]; then
-  _dry "would run: patch -p1 < ${PATCH_FILE} in ${TARGET}"
-else
-  cd "${TARGET}"
-  if patch -p1 --dry-run < "${PATCH_FILE}" >/dev/null 2>&1; then
-    patch -p1 < "${PATCH_FILE}"
-    _ok "patch applied cleanly"
-  else
-    _fail "patch did not apply cleanly. Source version may have diverged from ${BASE_VERSION}."
+    _fail "cli.js did not respond correctly to --help"
   fi
 fi
 
-# ── Step 5: Install dependencies ──────────────────────────────────────────────
-echo "Step 5: Install dependencies"
-if [[ $DRY_RUN -eq 1 ]]; then
-  _dry "would run: bun install in ${TARGET}"
-else
-  cd "${TARGET}"
-  bun install --frozen-lockfile 2>/dev/null || bun install
-  _ok "dependencies installed"
-fi
-
-# ── Step 6: Build ────────────────────────────────────────────────────────────
-echo "Step 6: Build"
-if [[ $DRY_RUN -eq 1 ]]; then
-  _dry "would run: bun run build in ${TARGET}"
-else
-  cd "${TARGET}"
-  bun run build
-  if [[ ! -f "${TARGET}/dist/cli.js" ]]; then
-    _fail "build completed but dist/cli.js not found"
-  fi
-  _ok "built: ${TARGET}/dist/cli.js"
-fi
-
-# ── Step 7: Write env file ────────────────────────────────────────────────────
-echo "Step 7: Write port config"
+# ── Step 6: Write env file ────────────────────────────────────────────────────
+echo "Step 6: Write port config"
 ENV_FILE="${TARGET}/.meridiana.env"
 if [[ $DRY_RUN -eq 1 ]]; then
   _dry "would write: ${ENV_FILE} with MERIDIAN_PORT=${PORT}"
 else
   cat > "${ENV_FILE}" << EOF
 # MeridianA proxy configuration
-# Source this file before starting the proxy, or set these variables in your
-# OpenClaw service definition.
-#
-# Base: ${BASE_PKG}@${BASE_VERSION} + OpenClaw patch
-# Patch: patches/meridiana-openclaw.patch (from openclaw-agent-memory-infra)
+# Base: @rynfar/meridian v1.30.2 + OpenClaw patch (MIT)
+# Vendor: vendor/meridiana-dist/ in openclaw-agent-memory-infra
 
 MERIDIAN_PORT=${PORT}
 MERIDIAN_HOST=127.0.0.1
-# MERIDIAN_PASSTHROUGH=0   # Set to 1 to enable tool passthrough (not recommended)
+# MERIDIAN_PASSTHROUGH=0
 EOF
-  _ok "env file written: ${ENV_FILE}"
+  _ok "env file: ${ENV_FILE}"
 fi
 
-# ── Summary and next steps ────────────────────────────────────────────────────
+# ── Summary ───────────────────────────────────────────────────────────────────
 echo "────────────────────────────────────────────────────────────────────"
 if [[ $DRY_RUN -eq 1 ]]; then
   echo "Dry run complete. Re-run without --dry-run to install."
@@ -225,20 +176,21 @@ echo "MeridianA installed at: ${TARGET}"
 echo ""
 echo "NEXT STEPS — required before use:"
 echo ""
-echo "  1. Authenticate Claude Max account (run once per machine):"
+echo "  1. Authenticate Claude Max account (once per machine, requires browser):"
 echo "       node ${TARGET}/dist/cli.js profile add"
-echo "     Follow the browser OAuth prompt. Tokens are stored by meridian;"
-echo "     do NOT copy tokens between machines."
+echo "     OAuth browser opens. Tokens stored by meridian."
+echo "     Do NOT copy tokens between machines."
 echo ""
 echo "  2. Start the proxy:"
 echo "       MERIDIAN_PORT=${PORT} node ${TARGET}/dist/cli.js"
-echo "     Or source the env file and start:"
+echo "     Or:"
 echo "       source ${ENV_FILE} && node ${TARGET}/dist/cli.js"
 echo ""
-echo "  3. Configure OpenClaw model aliases (meridiana/* → port ${PORT})."
-echo "     See docs/MERIDIANA_DEPENDENCY.md for alias configuration."
+echo "  3. Verify proxy:"
+echo "       curl -s http://127.0.0.1:${PORT}/v1/models | head -3"
 echo ""
-echo "  4. Verify with a test call through the proxy."
+echo "  4. Configure OpenClaw meridiana/* aliases → port ${PORT}."
+echo "     See docs/MERIDIANA_DEPENDENCY.md."
 echo ""
 echo "  AUTH COMMAND: node ${TARGET}/dist/cli.js profile add"
 echo ""

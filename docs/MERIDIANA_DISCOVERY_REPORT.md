@@ -1,5 +1,10 @@
 # MeridianA Discovery Report — PR #22 Pre-Implementation
 
+> **⚠️ Historical document — superseded by PR #22 implementation.**  
+> This report was the discovery phase before implementation began.  
+> For current install instructions see [`docs/MERIDIANA_DEPENDENCY.md`](MERIDIANA_DEPENDENCY.md)  
+> and [`scripts/install-meridiana.sh`](../scripts/install-meridiana.sh).
+
 > Generated: 2026-04-30  
 > Purpose: Identify the installable unit, document the current gap, and propose implementation options for reproducible MeridianA install.
 
