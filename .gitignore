@@ -18,3 +18,15 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# OpenClaw Agent Runtime Memory — local-only, never commit
+.agent/memory/index/
+.agent/memory/candidates/
+.agent/memory/wiki/*.md
+.agent/memory/raw/
+.agent/memory/checkpoints/
+.agent/memory/.locks/
+.agent/memory/reports/
+# Keep placeholders
+!.agent/memory/README.md
+!.agent/memory/**/.gitkeep
