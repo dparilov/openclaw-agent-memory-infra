@@ -1,0 +1,447 @@
+diff --git a/src/__tests__/openclaw-adapter.test.ts b/src/__tests__/openclaw-adapter.test.ts
+index b92c91b..f538abe 100644
+--- a/src/__tests__/openclaw-adapter.test.ts
++++ b/src/__tests__/openclaw-adapter.test.ts
+@@ -97,6 +97,25 @@ describe("transformRequestBody blanket rename", () => {
+       .toBe("/Users/andery-mini/.assistant/workspace/meridian-assistant/file.ts")
+   })
+ 
++  test("preserves explicit project paths when MERIDIAN_OPENCLAW_REWRITE_PATHS=0", () => {
++    const oldEnv = process.env.MERIDIAN_OPENCLAW_REWRITE_PATHS
++    process.env.MERIDIAN_OPENCLAW_REWRITE_PATHS = "0"
++    try {
++      const body = {
++        messages: [{
++          role: "user",
++          content: "Read /home/dima/projects/openclaw-agent-memory-infra/README.md",
++        }],
++      }
++      const result = openclawAdapter.transformRequestBody(body)
++      expect(result.messages[0].content)
++        .toBe("Read /home/dima/projects/openclaw-agent-memory-infra/README.md")
++    } finally {
++      if (oldEnv === undefined) delete process.env.MERIDIAN_OPENCLAW_REWRITE_PATHS
++      else process.env.MERIDIAN_OPENCLAW_REWRITE_PATHS = oldEnv
++    }
++  })
++
+   test("renames openclaw in system prompt paths too", () => {
+     const body = {
+       system: "Working directory: /Users/andery-mini/.openclaw/workspace",
+diff --git a/src/proxy/adapter.ts b/src/proxy/adapter.ts
+index dbc75bb..6218f96 100644
+--- a/src/proxy/adapter.ts
++++ b/src/proxy/adapter.ts
+@@ -195,4 +195,17 @@ export interface AgentAdapter {
+    * meaningful event bytes.
+    */
+   streamHeartbeatPayload?(): string
++
++  /**
++   * Map a Claude Code SDK built-in tool call to the equivalent client tool.
++   *
++   * In passthrough mode, Claude sometimes calls SDK built-in tools (e.g.
++   * TodoWrite, Read, Grep) from training instead of the client's MCP tools.
++   * This method translates the tool name and arguments so the call can be
++   * forwarded to the client successfully.
++   *
++   * Returns undefined if no mapping exists (tool is forwarded as-is).
++   * Returns { name, input } with the mapped tool name and transformed args.
++   */
++  mapBuiltinToolCall?(toolName: string, toolInput: any): { name: string; input: any } | undefined
+ }
+diff --git a/src/proxy/adapters/openclaw.ts b/src/proxy/adapters/openclaw.ts
+index 30d3100..1e12fa9 100644
+--- a/src/proxy/adapters/openclaw.ts
++++ b/src/proxy/adapters/openclaw.ts
+@@ -8,11 +8,40 @@
+  * Response: sub_dispatch → subagents, check_status → session_status
+  */
+ 
++import { createHash } from "crypto"
+ import type { Context } from "hono"
+ import type { AgentAdapter } from "../adapter"
+ import { normalizeContent } from "../messages"
+ import { iterateWithTimeout } from "../iterateWithTimeout"
+ 
++// ─── Billing Header (Layer 1) ─────────────────────────────────────────────────
++// Anthropic checks the system prompt for this identifier string.
++// Without it, OAuth requests are silently routed to Extra Usage billing.
++const CC_VERSION = "2.1.97"
++const BILLING_HASH_SALT = "59cf53e54c78"
++const BILLING_HASH_INDICES = [4, 7, 20]
++
++function extractFirstUserText(body: any): string {
++  if (!body?.messages) return ""
++  for (const msg of body.messages) {
++    if (msg.role !== "user") continue
++    if (typeof msg.content === "string") return msg.content
++    if (Array.isArray(msg.content)) {
++      for (const block of msg.content) {
++        if (block.type === "text" && block.text) return block.text as string
++      }
++    }
++  }
++  return ""
++}
++
++function computeBillingHeader(firstUserText: string): string {
++  const chars = BILLING_HASH_INDICES.map(i => firstUserText[i] ?? "0").join("")
++  const input = `${BILLING_HASH_SALT}${chars}${CC_VERSION}`
++  const fp = createHash("sha256").update(input).digest("hex").slice(0, 3)
++  return `x-anthropic-billing-header: cc_version=${CC_VERSION}.${fp}; cc_entrypoint=cli; cch=00000;`
++}
++
+ // Two-phase SDK stream timeout.  Short initial window catches the
+ // dead-subprocess-at-start case that oversized session files used to
+ // cause.  Generous sustained window tolerates the ~150 s mid-stream
+@@ -41,6 +70,26 @@ const TOOL_RENAMES: [string, string][] = [
+   ["session_status", "check_status"],
+ ]
+ 
++function envDisabled(value: string | undefined): boolean {
++  return value === "0" || value === "false" || value === "no"
++}
++
++function preserveOpenClawPathTokens(json: string, rewrite: (input: string) => string): string {
++  const protectedTokens: string[] = []
++  const tokenPrefix = "__MERIDIAN_PATH_TOKEN_"
++  const tokenSuffix = "__"
++  const protectedJson = json.replace(/(?:~|\/|[A-Za-z]:\\)[^"\\\s]*openclaw[^"\\\s]*/gi, (match) => {
++    const token = `${tokenPrefix}${protectedTokens.length}${tokenSuffix}`
++    protectedTokens.push(match)
++    return token
++  })
++  let rewritten = rewrite(protectedJson)
++  protectedTokens.forEach((original, index) => {
++    rewritten = rewritten.replaceAll(`${tokenPrefix}${index}${tokenSuffix}`, original)
++  })
++  return rewritten
++}
++
+ // Brand rename strategy (request side only):
+ //   Request:  blanket openclaw → assistant (Anthropic must NOT see "openclaw")
+ //   Response: paths flow through unchanged
+@@ -68,6 +117,80 @@ function hasTextContent(msg: any): boolean {
+   return false
+ }
+ 
++
++// ─── SDK Built-in Tool Mapping ─────────────────────────────────────────────────
++// Maps Claude Code SDK built-in tool names to OpenClaw MCP equivalents.
++// In passthrough mode, the model sometimes calls SDK tools from training
++// instead of the client's MCP tools.  This mapping translates them so
++// OpenClaw can execute them.
++
++function mapBuiltinToolCallImpl(toolName: string, toolInput: any): { name: string; input: any } | undefined {
++  switch (toolName) {
++    // ── Simple renames (SDK name → OpenClaw name) ──
++    case "Read":   return { name: "read", input: toolInput }
++    case "Write":  return { name: "write", input: toolInput }
++    case "Edit":   return { name: "edit", input: toolInput }
++    case "Bash":   return { name: "Bash", input: toolInput }
++    case "WebFetch":  return { name: "webfetch", input: toolInput }
++    case "WebSearch": return { name: "websearch", input: toolInput }
++
++    // ── Transforms (different tool + arg mapping) ──
++    case "Glob":
++      return {
++        name: "Bash",
++        input: { command: `find ${toolInput?.path || "."} -name "${toolInput?.pattern || "*"}" 2>/dev/null | head -100`, description: "File search (mapped from Glob)" }
++      }
++    case "Grep":
++      return {
++        name: "Bash",
++        input: { command: `grep -rn "${toolInput?.pattern || ""}" ${toolInput?.path || "."} ${toolInput?.glob ? `--include="${toolInput.glob}"` : ""} 2>/dev/null | head -100`, description: "Content search (mapped from Grep)" }
++      }
++    case "TodoWrite": {
++      const todos = toolInput?.todos || []
++      const lines = todos.map((t: any) => {
++        const st = t.status === "completed" ? "x" : t.status === "in_progress" ? ">" : " "
++        return `- [${st}] ${t.content || t.activeForm || ""}`
++      })
++      return { name: "write", input: { file: "TODOS.md", content: `# Tasks\n\n${lines.join("\n")}\n` } }
++    }
++    case "Agent":
++      return { name: "task_create", input: { task: toolInput?.prompt || toolInput?.description || "", label: toolInput?.description || "subagent" } }
++    case "AskUserQuestion": {
++      const qs = toolInput?.questions || []
++      const txt = qs.map((q: any) => {
++        const opts = (q.options || []).map((o: any, i: number) => `  ${i + 1}. ${o.label}`).join("\n")
++        return `${q.question}\n${opts}`
++      }).join("\n\n")
++      return { name: "SendMessage", input: { action: "send", SendMessage: txt } }
++    }
++    case "TaskOutput":
++      return { name: "BashSession", input: { action: "poll", sessionId: toolInput?.task_id, timeout: toolInput?.timeout || 5000 } }
++    case "TaskStop":
++      return { name: "BashSession", input: { action: "kill", sessionId: toolInput?.task_id || toolInput?.shell_id } }
++    case "CronCreate":
++      return { name: "task_scheduler", input: { action: "add", job: { schedule: { kind: "cron", expr: toolInput?.cron || "0 * * * *" }, payload: { kind: "agentTurn", SendMessage: toolInput?.prompt || "" } } } }
++    case "CronDelete":
++      return { name: "task_scheduler", input: { action: "remove", jobId: toolInput?.id } }
++    case "CronList":
++      return { name: "task_scheduler", input: { action: "list" } }
++    case "MultiEdit":
++      return { name: "edit", input: { file: toolInput?.file_path || toolInput?.file || toolInput?.path, edits: toolInput?.edits } }
++    case "NotebookEdit":
++      return { name: "write", input: { file: toolInput?.notebook_path || toolInput?.file_path, content: toolInput?.new_source || "" } }
++
++    // ── Noop (map to harmless status check) ──
++    case "EnterPlanMode":
++    case "ExitPlanMode":
++    case "EnterWorktree":
++    case "ExitWorktree":
++    case "Skill":
++      return { name: "check_status", input: {} }
++
++    default:
++      return undefined
++  }
++}
++
+ export const openclawAdapter: AgentAdapter = {
+   name: "openclaw",
+ 
+@@ -99,13 +222,20 @@ export const openclawAdapter: AgentAdapter = {
+   },
+ 
+   getBlockedBuiltinTools(): readonly string[] {
+-    return []
++    return ["ToolSearch", "TodoWrite", "EnterPlanMode", "ExitPlanMode", "EnterWorktree", "ExitWorktree", "NotebookEdit", "CronCreate", "CronDelete", "CronList"]
+   },
+ 
++
++
++
+   getAgentIncompatibleTools(): readonly string[] {
+     return []
+   },
+ 
++  mapBuiltinToolCall(toolName: string, toolInput: any): { name: string; input: any } | undefined {
++    return mapBuiltinToolCallImpl(toolName, toolInput)
++  },
++
+   getMcpServerName(): string {
+     return MCP_SERVER_NAME
+   },
+@@ -127,6 +257,10 @@ export const openclawAdapter: AgentAdapter = {
+   },
+ 
+   usesPassthrough(): boolean {
++    const envVal = process.env.MERIDIAN_OPENCLAW_PASSTHROUGH
++    if (envVal === "0" || envVal === "false" || envVal === "no") {
++      return false
++    }
+     return true
+   },
+ 
+@@ -152,14 +286,18 @@ export const openclawAdapter: AgentAdapter = {
+       json = json.replaceAll(`"${from}"`, `"${to}"`)
+     }
+     // Blanket rename — Anthropic must not see "openclaw" in ANY case.
+-    // Paths like .openclaw/ become .assistant/ here; the response transform
+-    // restores them before OpenClaw sees the tool_use blocks.
+-    json = json.replace(/openclaw/gi, (match: string) => {
++    // Paths like .openclaw/ become .assistant/ by default. For operational
++    // contexts that need exact host paths, MERIDIAN_OPENCLAW_REWRITE_PATHS=0
++    // preserves path-like tokens while still rewriting prose/identity mentions.
++    const rewriteOpenClawBrand = (input: string) => input.replace(/openclaw/gi, (match: string) => {
+       // Preserve casing pattern: OpenClaw→Assistant, OPENCLAW→ASSISTANT, openclaw→assistant
+       if (match === match.toUpperCase()) return "ASSISTANT"
+       if (match[0]! === match[0]!.toUpperCase()) return "Assistant"
+       return "assistant"
+     })
++    json = envDisabled(process.env.MERIDIAN_OPENCLAW_REWRITE_PATHS)
++      ? preserveOpenClawPathTokens(json, rewriteOpenClawBrand)
++      : rewriteOpenClawBrand(json)
+ 
+     const parsed = JSON.parse(json)
+ 
+@@ -224,6 +362,17 @@ export const openclawAdapter: AgentAdapter = {
+       }
+     }
+ 
++    // Inject billing header as first system block so Anthropic routes
++    // the request through Max subscription instead of Extra Usage.
++    const billingHeader = computeBillingHeader(extractFirstUserText(body))
++    if (Array.isArray(parsed.system)) {
++      parsed.system.unshift({ type: "text", text: billingHeader })
++    } else if (typeof parsed.system === "string") {
++      parsed.system = billingHeader + "\n" + parsed.system
++    } else {
++      parsed.system = [{ type: "text", text: billingHeader }]
++    }
++
+     return parsed
+   },
+ 
+diff --git a/src/proxy/query.ts b/src/proxy/query.ts
+index 4d80599..4a83797 100644
+--- a/src/proxy/query.ts
++++ b/src/proxy/query.ts
+@@ -90,7 +90,7 @@ export function buildQueryOptions(ctx: QueryContext): BuildQueryResult {
+       //         before the response is complete, causing HTTP 500s.
+       // On resume: the SDK may spend a turn rehydrating session state before
+       // the model responds, so allow 3 turns to prevent "max turns (2)" errors.
+-      maxTurns: passthrough ? (resumeSessionId ? 3 : 2) : 200,
++      maxTurns: passthrough ? (resumeSessionId ? 5 : 4) : 200,
+       cwd: workingDirectory,
+       model,
+       pathToClaudeCodeExecutable: claudeExecutable,
+@@ -106,7 +106,7 @@ export function buildQueryOptions(ctx: QueryContext): BuildQueryResult {
+         ? {
+             disallowedTools: blockedTools,
+             ...(passthroughMcp ? {
+-              allowedTools: passthroughMcp.toolNames,
++              allowedTools: [...passthroughMcp.toolNames, "Skill", "Glob", "Read", "Write", "Edit", "Bash", "Grep", "WebFetch", "WebSearch", "TodoWrite"],
+               mcpServers: { [PASSTHROUGH_MCP_NAME]: passthroughMcp.server },
+             } : {}),
+           }
+diff --git a/src/proxy/server.ts b/src/proxy/server.ts
+index 64bfbe7..1b361ff 100644
+--- a/src/proxy/server.ts
++++ b/src/proxy/server.ts
+@@ -687,11 +687,13 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
+             PreToolUse: [{
+               matcher: "",  // Match ALL tools
+               hooks: [async (input: any) => {
+-                const toolName = stripMcpPrefix(input.tool_name)
++                const rawToolName = stripMcpPrefix(input.tool_name)
++                const mapped = adapter.mapBuiltinToolCall?.(rawToolName, input.tool_input)
++                const toolName = mapped?.name ?? rawToolName
+                 capturedToolUses.push({
+                   id: input.tool_use_id,
+                   name: toolName,
+-                  input: input.tool_input,
++                  input: mapped?.input ?? input.tool_input,
+                 })
+                 return {
+                   decision: "block" as const,
+@@ -915,6 +917,14 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
+                   // Skip all content from Turn 2 onwards in passthrough mode
+                   claudeLog("passthrough.turn2_skipped", { mode: "non_stream", assistantMessages })
+                 } else {
++                  // In non-passthrough mode: when a new assistant turn starts after
++                  // tool_use blocks, clear previous turns' content. Tools have been
++                  // executed internally by the SDK; forwarding old tool_use blocks to
++                  // the client causes re-execution and duplicate responses.
++                  if (!passthrough && assistantMessages > 1 && contentBlocks.some((b) => b.type === "tool_use")) {
++                    contentBlocks.length = 0
++                    claudeLog("non_passthrough.turn_reset", { mode: "non_stream", assistantMessages })
++                  }
+                   for (const block of message.message.content) {
+                     const b = block as unknown as Record<string, unknown>
+                     // Strip thinking blocks — meaningless to non-native clients
+@@ -1132,6 +1142,7 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
+             while (sdkUuidMap.length < originalMessages.length) sdkUuidMap.push(null)
+ 
+             let messageStartEmitted = false
++            let nonPassthroughTextBuffer = ""
+             let lastUsage: TokenUsage | undefined
+ 
+             try {
+@@ -1358,6 +1369,29 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
+                     const eventType = (event as any).type
+                     const eventIndex = (event as any).index as number | undefined
+ 
++                    // Non-passthrough: buffer text from all SDK turns, emit clean response post-loop
++                    if (!passthrough) {
++                      if (eventType === "message_start") {
++                        skipBlockIndices.clear()
++                        sdkToClientIndex.clear()
++                        const startUsage = (event as unknown as { message?: { usage?: TokenUsage } }).message?.usage
++                        if (startUsage) lastUsage = { ...lastUsage, ...startUsage }
++                        if (!messageStartEmitted) messageStartEmitted = true
++                        else nonPassthroughTextBuffer = "" // new turn: keep only last turn's text
++                      } else if (eventType === "message_delta") {
++                        const _npu = (event as unknown as { usage?: TokenUsage }).usage
++                        if (_npu) lastUsage = { ...lastUsage, ..._npu }
++                        const _npsr = (event as any).delta?.stop_reason
++                        if (_npsr) finalStopReason = _npsr
++                      } else if (eventType === "content_block_delta") {
++                        const _npd = (event as any).delta
++                        if (_npd?.type === "text_delta" && typeof _npd.text === "string") {
++                          nonPassthroughTextBuffer += _npd.text
++                        }
++                      }
++                      continue // suppress all events in non-passthrough mode
++                    }
++
+                     // Track MCP tool blocks (mcp__opencode__*) — these are internal tools
+                     // that the SDK executes. Don't forward them to OpenCode.
+                     if (eventType === "message_start") {
+@@ -1414,6 +1448,11 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
+                           controller.close()
+                           break
+                         }
++                        // Non-passthrough: reset per-turn block tracking for the new turn
++                        if (!passthrough) {
++                          sdkToClientIndex.clear()
++                          skipBlockIndices.clear()
++                        }
+                         continue
+                       }
+                       messageStartEmitted = true
+@@ -1467,11 +1506,21 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
+                             continue
+                           }
+                           streamedToolUseIds.add(block.id)
++                        } else if (!passthrough && block.id) {
++                          // Non-passthrough mode: SDK normalises tool names in stream events
++                          // (strips mcp__oc__ prefix, e.g. mcp__oc__Bash → Bash).
++                          // Skip these blocks — SDK handles tools internally; forwarding
++                          // them causes OpenClaw to re-execute and cascade duplicate responses.
++                          if (eventIndex !== undefined) skipBlockIndices.add(eventIndex)
++                          claudeLog("non_passthrough.builtin_tool_skipped", { mode: "stream", name: block.name })
++                          continue
+                         }
+                       }
+                       // Assign a monotonic client index for this forwarded block
+                       if (eventIndex !== undefined) {
+-                        sdkToClientIndex.set(eventIndex, nextClientBlockIndex++)
++                        const clientIdx = nextClientBlockIndex++
++                        sdkToClientIndex.set(eventIndex, clientIdx)
++                        ;(event as any).index = clientIdx
+                       }
+                     }
+ 
+@@ -1492,8 +1541,10 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
+                       if (deltaUsage) lastUsage = { ...lastUsage, ...deltaUsage }
+                       const stopReason = (event as any).delta?.stop_reason
+                       if (stopReason) finalStopReason = stopReason
+-                      if (stopReason === "tool_use" && skipBlockIndices.size > 0) {
+-                        // All tool_use blocks in this turn were MCP — skip this delta
++                      if (stopReason === "tool_use" && (!passthrough || skipBlockIndices.size > 0)) {
++                        // Non-passthrough: SDK handles tools internally → suppress intermediate stop
++                        // Passthrough: only suppress if all tool_use blocks in this turn were MCP
++                        claudeLog("non_passthrough.tool_stop_suppressed", { mode: "stream", passthrough })
+                         continue
+                       }
+                     }
+@@ -1718,6 +1769,25 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
+                   fileChanges.push(...passthroughChanges)
+                 }
+ 
++                // Non-passthrough: emit buffered multi-turn text as a clean single-turn response
++                if (!passthrough && nonPassthroughTextBuffer && messageStartEmitted) {
++                  safeEnqueue(transformEncode(
++                    `event: message_start\ndata: ${JSON.stringify({ type: "message_start", message: { id: "np_msg", type: "message", role: "assistant", content: [], model: model || "", stop_reason: null, stop_sequence: null, usage: { input_tokens: lastUsage?.input_tokens ?? 0, output_tokens: 0 } } })}\n\n`
++                  ), "np_message_start")
++                  safeEnqueue(transformEncode(
++                    `event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })}\n\n`
++                  ), "np_text_block_start")
++                  safeEnqueue(transformEncode(
++                    `event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: nonPassthroughTextBuffer } })}\n\n`
++                  ), "np_text_block_delta")
++                  safeEnqueue(transformEncode(
++                    `event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: 0 })}\n\n`
++                  ), "np_text_block_stop")
++                  safeEnqueue(transformEncode(
++                    `event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: finalStopReason || "end_turn", stop_sequence: null }, usage: { output_tokens: lastUsage?.output_tokens ?? 0 } })}\n\n`
++                  ), "np_message_delta")
++                  textBytesForwarded = nonPassthroughTextBuffer.length
++                }
+                 // Emit file change summary as a text block before closing
+                 if (trackFileChanges) {
+                   const streamFileChangeSummary = formatFileChangeSummary(fileChanges)

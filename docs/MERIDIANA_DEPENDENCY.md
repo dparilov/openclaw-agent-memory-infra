@@ -1,5 +1,14 @@
 # MeridianA / OpenClaw Runtime Dependency
 
+## Package Attribution
+
+- **Base package:** `@rynfar/meridian`
+- **License:** MIT
+- **Pinned version:** 1.30.2
+- **Local OpenClaw compatibility patch:** `patches/meridiana-openclaw.patch` (maintained in this repo)
+- **Patch contents:** 262 lines across 5 files — OpenClaw adapter, SDK tool mapping, passthrough suppression, billing header
+- **Future work:** Test and port patches to `@rynfar/meridian` latest (currently v1.40.0).
+
 ## Overview
 
 The `openclaw-agent-memory-infra` project is developed and maintained alongside a live
@@ -64,15 +73,74 @@ will not be available until `/new` is called in that topic.
 
 **Fix:** After registering or modifying a skill, run `/new` in the target topic.
 
+## MeridianA Install
+
+### Requirements
+
+| Tool | Minimum | Install |
+|------|---------|--------|
+| Node.js | >= 22 | https://nodejs.org |
+| npm | any recent | bundled with Node |
+| GNU patch | any | `sudo apt-get install patch` |
+| bun | 1.x | auto-installed by script |
+
+### Install steps
+
+```bash
+# 1. Clone this repo (if not already)
+git clone https://github.com/dparilov/openclaw-agent-memory-infra.git
+cd openclaw-agent-memory-infra
+
+# 2. Install MeridianA
+bash scripts/install-meridiana.sh --target ~/meridiana-openclaw --port 3470
+
+# 3. Authenticate Claude Max account (once per machine)
+node ~/meridiana-openclaw/dist/cli.js profile add
+# Browser OAuth opens. Do NOT copy tokens between machines.
+
+# 4. Start the proxy
+MERIDIAN_PORT=3470 node ~/meridiana-openclaw/dist/cli.js
+
+# 5. Verify proxy is running
+curl -s http://127.0.0.1:3470/v1/models | python3 -m json.tool | head -5
+```
+
+### Port configuration
+
+Default MeridianA proxy port: **3470** (configured via `MERIDIAN_PORT` env var).
+OpenClaw model aliases using `meridiana/` must point to this proxy instance.
+
+The port is set in the env file written by the install script:
+```
+~/meridiana-openclaw/.meridiana.env
+```
+
+Source this file before starting the proxy, or set `MERIDIAN_PORT` in your OpenClaw service definition.
+
+### OpenClaw model alias configuration
+
+OpenClaw uses model aliases to route requests to the correct proxy:
+
+| Alias pattern | Proxy port | Used by |
+|--------------|-----------|--------|
+| `meridian/claude-sonnet-4-6` | standard (unpatched) | reviewer, alena, main agents |
+| `meridiana/claude-opus-4-7` | 3470 (patched) | uae, tanya, andrey agents |
+
+Configure aliases in your OpenClaw provider config (location varies by OpenClaw version;
+check `openclaw config providers` or `~/.openclaw/config.yaml`).
+
 ## Reproducibility Checklist
 
 To set up on a clean MeridianA/OpenClaw instance:
 
 1. Clone this repo to `/home/<user>/projects/openclaw-agent-memory-infra`
-2. Copy `skills/archive-context/SKILL.md` → `~/.openclaw/workspace/skills/archive-context/SKILL.md`
+2. Run `bash scripts/install-meridiana.sh --target ~/meridiana-openclaw --port 3470`
+3. Run `node ~/meridiana-openclaw/dist/cli.js profile add` (OAuth auth)
+4. Start proxy: `MERIDIAN_PORT=3470 node ~/meridiana-openclaw/dist/cli.js`
+5. Copy `skills/archive-context/SKILL.md` → `~/.openclaw/workspace/skills/archive-context/SKILL.md`
    - Verify YAML frontmatter contains `name:` and `description:`
-3. Verify `openclaw skills check` shows `archive-context` as eligible
-4. Run `/new` in any topic where you want to use the skill
-5. Test: `/archive-context <topic_id> --status`
+6. Verify `openclaw skills check` shows `archive-context` as eligible
+7. Run `/new` in any topic where you want to use the skill
+8. Test: `/archive-context <topic_id> --status`
 
-No pip installs required. Python 3.10+ stdlib is sufficient for all scripts in this repo.
+No pip installs required for skills. Python 3.10+ stdlib is sufficient for all scripts in this repo.
