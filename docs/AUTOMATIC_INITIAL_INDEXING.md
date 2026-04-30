@@ -1,9 +1,7 @@
 # Automatic Initial Indexing
 
-> **Status: product design contract.**  
-> The runtime indexer is not implemented in this PR.  
-> Until implementation lands, infra agents must treat this document as the required behavior
-> and report when a step is simulated or unavailable.
+> **Status: Implemented.**  
+> `scripts/context_access/initial-index.py` is available and integrated into `setup.sh`.
 
 ## Core Principle
 
@@ -96,3 +94,16 @@ Automatic indexing does **not** require per-fact approval. Human approval is req
 3. **Sensitive-map review** — before indexing resumes after a sensitive-data flag
 
 Everything else proceeds automatically.
+
+## Artifacts Written
+
+`initial-index.py` writes the following files to `.agent/memory/index/topic-<id>/`:
+
+| File | Description |
+|---|---|
+| `index_meta.json` | Top-level stats: total messages, windows, cluster summary, sensitive pattern count |
+| `timeline.json` | Per-window timeline: roles, clusters, high-risk flags, timestamps |
+| `cluster_map.json` | Maps cluster type names to window refs where they appear |
+| `sensitive_map.json` | Sensitive pattern categories + window refs — **values never stored** |
+| `recovery_index.json` | Windows flagged for Tier B (auto-promote) or Tier C (human review) |
+| `windows/w0000.json` … | Per-window detail: message count, roles, cluster hits, sensitive flags |

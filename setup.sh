@@ -620,6 +620,7 @@ SCRIPTS_LIST=(
   "scripts/context_access/manage-candidates.py"
   "scripts/context_access/build-wiki.py"
   "scripts/context_access/validate-wiki.py"
+  "scripts/context_access/initial-index.py"
   "scripts/context_access/io_utils.py"
 )
 TOOL_DIR="$TARGET/.agent/tools/context_access"
@@ -669,6 +670,30 @@ case "$INSTALL_SCRIPTS" in
     ;;
 esac
 
+# ── B3: Apply runtime memory gitignore fragment ───────────────────────────────
+GITIGNORE_FRAG="$SCRIPT_DIR/templates/agent-gitignore.fragment"
+TARGET_GITIGNORE="$TARGET/.gitignore"
+
+if [[ -f "$GITIGNORE_FRAG" ]]; then
+  if grep -q "OpenClaw Agent Runtime Memory" "$TARGET_GITIGNORE" 2>/dev/null; then
+    echo "gitignore: fragment already present in $TARGET_GITIGNORE (skipping)"
+  else
+    if [[ $DRY_RUN -eq 1 ]]; then
+      echo "[dry-run] would append agent-gitignore.fragment → $TARGET_GITIGNORE"
+    else
+      {
+        echo ""
+        echo "# ── BEGIN openclaw-agent-memory-infra gitignore fragment ──"
+        cat "$GITIGNORE_FRAG"
+        echo "# ── END openclaw-agent-memory-infra gitignore fragment ────"
+      } >> "$TARGET_GITIGNORE"
+      echo "gitignore: appended runtime memory rules → $TARGET_GITIGNORE"
+    fi
+  fi
+else
+  echo "WARN: agent-gitignore.fragment not found at $GITIGNORE_FRAG (skipping)"
+fi
+
 echo "Done. Target: $TARGET"
 # ── B4: non-live smoke test ───────────────────────────────────────────────────
 if [[ $SMOKE_TEST -eq 1 ]]; then
@@ -713,7 +738,7 @@ if [[ $SMOKE_TEST -eq 1 ]]; then
   fi
   # Tool --help (5 tools; installed copy takes priority, falls back to source)
   _TOOL_DIR="$TARGET/.agent/tools/context_access"
-  for _tool in read-topic.py archive-batch-v2.py manage-candidates.py build-wiki.py validate-wiki.py; do
+  for _tool in read-topic.py archive-batch-v2.py manage-candidates.py build-wiki.py validate-wiki.py initial-index.py; do
     _tp="$_TOOL_DIR/$_tool"
     if [[ ! -f "$_tp" ]]; then
       _tp="$SCRIPT_DIR/scripts/context_access/$_tool"

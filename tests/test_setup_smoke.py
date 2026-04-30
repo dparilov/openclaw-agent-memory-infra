@@ -152,9 +152,11 @@ class TestSmokeToolHelp:
         "archive-batch-v2.py",
         "manage-candidates.py",
         "build-wiki.py",
+        "validate-wiki.py",
+        "initial-index.py",
     ]
 
-    def test_all_4_tools_mentioned_in_output(self, tmp_path):
+    def test_all_tools_mentioned_in_output(self, tmp_path):
         result = run_setup("--test", target=tmp_path)
         for tool in self.TOOLS:
             assert tool in result.stdout, f"{tool} not mentioned in smoke output"
