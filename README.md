@@ -36,10 +36,12 @@ L4  Canonical Docs docs/ + .agent/AGENT_CONTEXT.md  Architecture, runbooks, ADR
 
 ## First Time? Start Here
 
-→ **[Full Environment Onboarding](docs/FULL_ENVIRONMENT_ONBOARDING.md)** — complete VPS-to-handoff setup checklist (OS, packages, GitHub, OpenClaw, Telegram, models).
+→ **[Setup Wizard Flow](docs/SETUP_WIZARD_FLOW.md)** — canonical 9-phase onboarding: environment gates, target project selection, topic resolution, scaffold, config activation, indexing, and agent instruction pack. **Start here.**
+→ **[Full Environment Onboarding](docs/FULL_ENVIRONMENT_ONBOARDING.md)** — detailed gate reference (A–K) used by the wizard for environment checks.
 → **[Bootstrap Prerequisites](docs/BOOTSTRAP_PREREQUISITES.md)** — concise prerequisites-only checklist if your environment is already set up.
+→ **[Final Agent Instruction Pack](docs/FINAL_AGENT_INSTRUCTION_PACK.md)** — ready-to-send prompts for infra/coder/reviewer agents (produced by wizard Phase 8).
 
-Both documents can be used with any external assistant (ChatGPT, Claude web, etc.) to walk
+All documents can be used with any external assistant (ChatGPT, Claude web, etc.) to walk
 through setup step by step and produce an explicit READY / NOT READY verdict.
 
 ---
@@ -273,6 +275,11 @@ See `docs/SKILL_VOCABULARY.md` for decision guide on when to call each skill.
 │   ├── bootstrap.sh            Quick bootstrap script
 │   └── memory/
 ├── docs/
+│   ├── SETUP_WIZARD_FLOW.md    Canonical 9-phase setup wizard (primary onboarding)
+│   ├── TARGET_PROJECT_SELECTION.md  Project selection modes and ACK format
+│   ├── FINAL_AGENT_INSTRUCTION_PACK.md  Ready-to-send agent prompts (wizard Phase 8)
+│   ├── FULL_ENVIRONMENT_ONBOARDING.md  Environment gate reference (A–K)
+│   ├── EXTERNAL_TO_INFRA_HANDOFF.md  Fallback/escalation path to infra agent
 │   ├── ROADMAP.md              Implementation phases (1–5)
 │   ├── PRE_LIVE_CHECKLIST.md   Pre-live integrity workflow
 │   ├── MEMORY_OUTPUT_CONTRACT.md  Output format spec for memory files

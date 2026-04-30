@@ -3,6 +3,11 @@
 Use this doc when setting up a **brand-new VPS or workstation** to run OpenClaw with agent memory.  
 Complete every section in order. Each gate must pass before proceeding.
 
+> **New setup?** The recommended path is the **[Setup Wizard](SETUP_WIZARD_FLOW.md)**,
+> which walks through all gates below interactively and produces the agent instruction pack.
+> Use this doc as the gate reference the wizard reads from.
+> Direct infra-agent handoff (§K below) is now a fallback path.
+
 ---
 
 ## A. OS Baseline
@@ -175,7 +180,8 @@ Before onboarding agents, decide:
 
 ## K. Ready-for-Handoff Report
 
-Before handing off to the infra agent, produce this report:
+Produce this report at the end of environment setup.
+It is used by the **Setup Wizard** (primary path) or the **infra agent** (fallback path).
 
 ```
 === READY-FOR-HANDOFF REPORT ===
@@ -189,9 +195,12 @@ Codex:          <version or N/A>
 MeridianA:      <version or N/A>
 Topics planned: <list>
 Roles planned:  <list>
-Gate summary:   A=PASS B=PASS C=PASS D=PASS E=PASS F=PASS G=PASS H=PASS/N/A J=PASS
+Gate summary:   A=PASS B=PASS B2=PASS C=PASS D=PASS E=PASS F=PASS G=PASS H=PASS/N/A I=PASS/N/A J=PASS
 Open issues:    <none / list>
 ```
 
-Paste this report into your first message to the infra agent.  
-See `docs/EXTERNAL_TO_INFRA_HANDOFF.md` for the expected handoff sequence.
+**Primary path:** Paste this into the Setup Wizard (Phase 1 completion).
+See `docs/SETUP_WIZARD_FLOW.md`.
+
+**Fallback path:** Paste into your first message to the infra agent.
+See `docs/EXTERNAL_TO_INFRA_HANDOFF.md`.

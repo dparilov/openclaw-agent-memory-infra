@@ -1,5 +1,23 @@
 # External Operator → Infra Agent Handoff
 
+> **This is the fallback and escalation path.**
+> The primary setup path is the **[Setup Wizard](SETUP_WIZARD_FLOW.md)**.
+> Use this doc when: (a) the wizard cannot complete setup, (b) you need to
+> escalate from the wizard, or (c) you are handling post-setup memory operations.
+
+### When to escalate from the wizard
+
+```
+/handoff
+TRIGGER: wizard-escalation
+WIZARD STATE: Phase <N> — <reason why wizard cannot proceed>
+<paste wizard status block>
+```
+
+The infra agent will resume from the wizard state and complete setup.
+
+---
+
 ## Why This Boundary Exists
 
 External operators (humans or non-infra agents) interact with OpenClaw through  
