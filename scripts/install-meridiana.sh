@@ -3,7 +3,8 @@
 #
 # MeridianA = @rynfar/meridian v1.30.2 with OpenClaw compatibility patches,
 # distributed as a pre-built dist in vendor/meridiana-dist/.
-# Base package license: MIT (https://github.com/rynfar/meridian).
+# Base package license: MIT (https://github.com/rynfar/meridian)
+# Runtime deps pinned exactly; lockfile at vendor/meridiana-dist/package-lock.json.
 #
 # Usage:
 #   bash scripts/install-meridiana.sh [OPTIONS]
@@ -19,6 +20,7 @@
 #   - npm (any recent version)
 #
 # No bun required. No build step. Pre-built dist is vendored in this repo.
+# Runtime deps installed via `npm ci --omit=dev` (reproducible, lockfile-pinned).
 #
 # After successful install:
 #   1. Authenticate Claude Max account (run once per machine, requires browser):
@@ -102,7 +104,10 @@ fi
 if [[ ! -f "${VENDOR_DIR}/cli.js" ]]; then
   _fail "cli.js not found in ${VENDOR_DIR}. Repo may be incomplete."
 fi
-_ok "vendor dir: ${VENDOR_DIR} ($(ls "${VENDOR_DIR}"/*.js | wc -l) JS files)"
+if [[ ! -f "${VENDOR_DIR}/package-lock.json" ]]; then
+  _fail "package-lock.json not found in ${VENDOR_DIR}. Repo may be incomplete."
+fi
+_ok "vendor dir: ${VENDOR_DIR} ($(ls "${VENDOR_DIR}"/*.js | wc -l) JS files, lockfile present)"
 
 # ── Step 2: Create target directory ───────────────────────────────────────────
 echo "Step 2: Create target directory"
@@ -118,20 +123,24 @@ echo "Step 3: Copy pre-built dist"
 if [[ $DRY_RUN -eq 1 ]]; then
   _dry "would copy: ${VENDOR_DIR}/*.js → ${TARGET}/dist/"
   _dry "would copy: ${VENDOR_DIR}/package.json → ${TARGET}/package.json"
+  _dry "would copy: ${VENDOR_DIR}/package-lock.json → ${TARGET}/package-lock.json"
 else
   cp "${VENDOR_DIR}"/*.js "${TARGET}/dist/"
   cp "${VENDOR_DIR}/package.json" "${TARGET}/package.json"
-  _ok "dist copied: $(ls "${TARGET}/dist/"*.js | wc -l) JS files"
+  cp "${VENDOR_DIR}/package-lock.json" "${TARGET}/package-lock.json"
+  _ok "dist copied: $(ls "${TARGET}/dist/"*.js | wc -l) JS files + lockfile"
 fi
 
-# ── Step 4: Install runtime dependencies ──────────────────────────────────────
-echo "Step 4: Install runtime dependencies"
+# ── Step 4: Install runtime dependencies (reproducible via npm ci) ─────────────
+echo "Step 4: Install runtime dependencies (npm ci --omit=dev)"
 if [[ $DRY_RUN -eq 1 ]]; then
-  _dry "would run: npm install in ${TARGET}"
+  _dry "would run: npm ci --omit=dev in ${TARGET}"
 else
   cd "${TARGET}"
-  npm install --omit=dev --prefer-offline 2>/dev/null || npm install --omit=dev
-  _ok "node_modules installed"
+  if ! npm ci --omit=dev 2>&1; then
+    _fail "npm ci failed. Lockfile may be out of sync with package.json."
+  fi
+  _ok "node_modules installed (lockfile-pinned)"
 fi
 
 # ── Step 5: Smoke test ────────────────────────────────────────────────────────

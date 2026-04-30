@@ -2,7 +2,8 @@
 
 All tests are non-network: no npm calls, no actual install performed.
 The install script copies pre-built JS from vendor/meridiana-dist/ and then
-runs `npm install --omit=dev` for runtime deps.  No bun, no build step.
+runs `npm ci --omit=dev` (reproducible, lockfile-pinned) for runtime deps.
+No bun, no build step.
 
 patches/meridiana-openclaw.patch remains in the repo as a documentation
 artifact (historical record of the 6-commit OpenClaw diff).
@@ -41,28 +42,54 @@ def test_script_exists_and_is_executable():
 
 def test_vendor_dir_exists_with_cli():
     assert VENDOR_DIR.exists(), f"vendor dir must exist: {VENDOR_DIR}"
-    cli = VENDOR_DIR / "cli.js"
-    assert cli.exists(), "vendor/meridiana-dist/cli.js must exist"
+    assert (VENDOR_DIR / "cli.js").exists(), "vendor/meridiana-dist/cli.js must exist"
 
 
 def test_vendor_dir_has_js_files():
     js_files = list(VENDOR_DIR.glob("*.js"))
     assert len(js_files) >= 10, (
-        f"vendor dir must have ≥10 JS files, found {len(js_files)}"
+        f"vendor dir must have >=10 JS files, found {len(js_files)}"
     )
 
 
-# ── 3. Vendor package.json has correct structure ──────────────────────────────
+# ── 3. Lockfile present ───────────────────────────────────────────────────────
+
+def test_vendor_lockfile_exists():
+    lockfile = VENDOR_DIR / "package-lock.json"
+    assert lockfile.exists(), "vendor/meridiana-dist/package-lock.json must exist"
+    data = json.loads(lockfile.read_text())
+    assert data.get("lockfileVersion", 0) >= 2, (
+        "package-lock.json must be lockfileVersion >= 2"
+    )
+
+
+# ── 4. Dependency versions are exact (no ^ or ~) ─────────────────────────────
+
+def test_vendor_package_json_deps_are_exact():
+    pkg = json.loads((VENDOR_DIR / "package.json").read_text())
+    deps = pkg.get("dependencies", {})
+    for name, version in deps.items():
+        assert not version.startswith("^"), (
+            f"dependency {name!r} must be exact (no ^): {version!r}"
+        )
+        assert not version.startswith("~"), (
+            f"dependency {name!r} must be exact (no ~): {version!r}"
+        )
+
 
 def test_vendor_package_json_has_runtime_deps():
-    pkg_path = VENDOR_DIR / "package.json"
-    assert pkg_path.exists(), "vendor/meridiana-dist/package.json must exist"
-    pkg = json.loads(pkg_path.read_text())
+    pkg = json.loads((VENDOR_DIR / "package.json").read_text())
     deps = pkg.get("dependencies", {})
     assert "@anthropic-ai/claude-agent-sdk" in deps, (
-        "package.json must declare @anthropic-ai/claude-agent-sdk dependency"
+        "package.json must declare @anthropic-ai/claude-agent-sdk"
     )
-    assert "ws" in deps, "package.json must declare ws dependency"
+    assert "ws" in deps, "package.json must declare ws"
+    assert deps["@anthropic-ai/claude-agent-sdk"] == "0.2.89", (
+        f"claude-agent-sdk must be pinned to 0.2.89, got {deps['@anthropic-ai/claude-agent-sdk']!r}"
+    )
+    assert deps["ws"] == "8.20.0", (
+        f"ws must be pinned to 8.20.0, got {deps['ws']!r}"
+    )
 
 
 def test_vendor_package_json_version():
@@ -80,7 +107,7 @@ def test_vendor_package_json_mit_attribution():
     )
 
 
-# ── 4. Patch file kept as documentation artifact ──────────────────────────────
+# ── 5. Patch file kept as documentation artifact ──────────────────────────────
 
 def test_patch_doc_artifact_exists_and_nonempty():
     """The patch file is kept as historical documentation, not applied during install."""
@@ -92,7 +119,7 @@ def test_patch_doc_artifact_exists_and_nonempty():
     assert "diff --git" in content, "patch file must be a valid git diff"
 
 
-# ── 5. --help exits 0 and documents all flags ────────────────────────────────
+# ── 6. --help exits 0 and documents all flags ────────────────────────────────
 
 def test_help_exits_zero_and_has_flags():
     r = run_script("--help")
@@ -103,7 +130,7 @@ def test_help_exits_zero_and_has_flags():
     assert "--port" in out, "--help must mention --port"
 
 
-# ── 6. --dry-run exits exactly 2 when node/npm and vendor are present ─────────
+# ── 7. --dry-run exits exactly 2 when node/npm and vendor are present ─────────
 
 def test_dry_run_exits_2():
     """When node, npm, and vendor dir are all present, --dry-run must exit 2."""
@@ -115,27 +142,45 @@ def test_dry_run_exits_2():
         f"--dry-run must exit 2 (dry-run complete), got {r.returncode}\n"
         f"stdout: {r.stdout}\nstderr: {r.stderr}"
     )
-    # Must not have created anything
     assert not Path("/tmp/test-meridiana-dryrun/dist/cli.js").exists(), (
         "--dry-run must not create dist/cli.js"
     )
 
 
-# ── 7. --dry-run output shows [dry-run] markers and mentions vendor ────────────
+# ── 8. --dry-run output mentions npm ci ───────────────────────────────────────
 
-def test_dry_run_output_markers():
+def test_dry_run_mentions_npm_ci():
     r = run_script("--dry-run", "--target", "/tmp/test-meridiana-dryrun2")
     assert "[dry-run]" in r.stdout, (
         f"--dry-run output must contain '[dry-run]' markers\n{r.stdout}"
     )
-    combined = r.stdout + r.stderr
-    # Should mention copying from vendor or dist
-    assert any(word in combined.lower() for word in ("vendor", "dist", "copy")), (
-        f"--dry-run output must mention vendor/dist/copy\n{combined}"
+    assert "npm ci" in r.stdout, (
+        f"--dry-run output must mention 'npm ci'\n{r.stdout}"
     )
 
 
-# ── 8. Script fails fast with clear message when vendor dir is missing ─────────
+# ── 9. Install script uses npm ci (not plain npm install) ─────────────────────
+
+def test_script_uses_npm_ci():
+    content = SCRIPT.read_text()
+    assert "npm ci --omit=dev" in content, (
+        "install script must use 'npm ci --omit=dev' for reproducible install"
+    )
+    assert "npm install --omit=dev" not in content, (
+        "install script must not fall back to plain 'npm install --omit=dev'"
+    )
+
+
+# ── 10. Install script checks for lockfile ────────────────────────────────────
+
+def test_script_checks_lockfile():
+    content = SCRIPT.read_text()
+    assert "package-lock.json" in content, (
+        "install script must check for package-lock.json"
+    )
+
+
+# ── 11. Script fails fast when vendor dir is missing ──────────────────────────
 
 def test_fails_fast_if_vendor_dir_missing():
     """Script must exit 1 if run from a dir with no vendor/meridiana-dist/."""
@@ -143,7 +188,6 @@ def test_fails_fast_if_vendor_dir_missing():
         fake_scripts = Path(tmp) / "scripts"
         fake_scripts.mkdir()
         shutil.copy(SCRIPT, fake_scripts / "install-meridiana.sh")
-        # No vendor dir created → script should fail
         r = subprocess.run(
             ["bash", str(fake_scripts / "install-meridiana.sh"), "--dry-run"],
             capture_output=True, text=True,
@@ -157,14 +201,14 @@ def test_fails_fast_if_vendor_dir_missing():
     )
 
 
-# ── 9. MIT license attribution present in install script ──────────────────────
+# ── 12. MIT license attribution ───────────────────────────────────────────────
 
 def test_mit_license_attributed():
     content = SCRIPT.read_text()
     assert "MIT" in content, "install script must attribute MIT license"
 
 
-# ── 10. Script does not contain secrets or tokens ────────────────────────────
+# ── 13. No secrets in script ─────────────────────────────────────────────────
 
 def test_script_has_no_secrets():
     content = SCRIPT.read_text()
@@ -174,7 +218,7 @@ def test_script_has_no_secrets():
         )
 
 
-# ── 11. Auth command documented in script ─────────────────────────────────────
+# ── 14. Auth command documented ───────────────────────────────────────────────
 
 def test_auth_command_documented():
     content = SCRIPT.read_text()
