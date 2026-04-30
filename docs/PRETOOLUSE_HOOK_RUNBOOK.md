@@ -110,8 +110,9 @@ Wait 3–5 seconds for the gateway to come up before proceeding.
 ## Step 6 — Verify with doctor/channels
 
 ```bash
-openclaw doctor
-openclaw channels
+openclaw gateway status || true
+openclaw doctor || true
+openclaw channels status --probe || true
 ```
 
 Expected: all channels show `connected` or `ok`. No `hook` errors in output.

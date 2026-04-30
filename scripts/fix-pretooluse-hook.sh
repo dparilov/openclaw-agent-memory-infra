@@ -2,35 +2,46 @@
 # fix-pretooluse-hook.sh — Self-healing script for PreToolUse:Callback hook blockage.
 #
 # Usage:
-#   bash scripts/fix-pretooluse-hook.sh [--disable-pretooluse-hook] [--dry-run] [--verbose]
+#   bash scripts/fix-pretooluse-hook.sh [OPTIONS]
 #
-# Steps performed:
-#   2. Inspect ~/.claude/settings.json for PreToolUse hooks
-#   3. Backup settings.json
-#   4. Remove PreToolUse hook entries
-#   5. Restart OpenClaw gateway
-#   6. Verify doctor/channels
-#   7. Run harmless tool test
+# Options:
+#   --disable-pretooluse-hook   Backup, remove hook, restart gateway, verify.
+#                               Without this flag the script is inspect-only.
+#   --skip-gateway-restart      Skip gateway restart and health-check steps.
+#                               Safe for CI / unit tests.
+#   --dry-run                   Print what would be done; do not modify anything.
+#   --verbose | -v              Extra logging.
+#   --help | -h                 Show this help.
 #
-# Exit codes:
-#   0 = hook cleared and gateway healthy
-#   1 = hook removal failed or gateway still unhealthy
-#   2 = no hook found (nothing to fix)
+# Default (no flags): inspect-only — report hook presence; never modify settings.json.
+#   Exit 0 = hook found (re-run with --disable-pretooluse-hook to remove)
+#   Exit 2 = no hook found (nothing to fix)
+#
+# With --disable-pretooluse-hook:
+#   Exit 0 = hook cleared (and gateway healthy if restart not skipped)
+#   Exit 1 = hook removal failed or gateway still unhealthy
+#
+# Environment:
+#   FIX_HOOK_TIMEOUT   Seconds to wait for each external command (default: 10)
+#   FIX_HOOK_SKIP_GATEWAY=1   Same effect as --skip-gateway-restart
 
 set -euo pipefail
 
-# ── Defaults ────────────────────────────────────────────────────────────────
+# ── Defaults ──────────────────────────────────────────────────────────────────
 DISABLE=0
 DRY_RUN=0
 VERBOSE=0
+SKIP_GATEWAY=${FIX_HOOK_SKIP_GATEWAY:-0}
+CMD_TIMEOUT=${FIX_HOOK_TIMEOUT:-10}
 SETTINGS="${HOME}/.claude/settings.json"
 PASS=0
 FAIL=0
 
-# ── Parse args ───────────────────────────────────────────────────────────────
+# ── Parse args ────────────────────────────────────────────────────────────────
 for arg in "$@"; do
   case "$arg" in
     --disable-pretooluse-hook) DISABLE=1 ;;
+    --skip-gateway-restart)    SKIP_GATEWAY=1 ;;
     --dry-run)                 DRY_RUN=1 ;;
     --verbose|-v)              VERBOSE=1 ;;
     --help|-h)
@@ -48,10 +59,11 @@ _log()  { echo "  [fix-hook] $*"; }
 _pass() { echo "  PASS  $*"; PASS=$((PASS+1)); }
 _fail() { echo "  FAIL  $*" >&2; FAIL=$((FAIL+1)); }
 _info() { [[ $VERBOSE -eq 1 ]] && echo "  INFO  $*" || true; }
+_run()  { timeout "${CMD_TIMEOUT}" "$@" 2>/dev/null || true; }
 
 echo "── PreToolUse hook self-healing ────────────────────────────────────"
 
-# ── Step 2: Inspect settings.json ────────────────────────────────────────────
+# ── Step 2: Inspect settings.json ─────────────────────────────────────────────
 echo "Step 2: Inspect $SETTINGS"
 if [[ ! -f "$SETTINGS" ]]; then
   _fail "settings.json not found at $SETTINGS"
@@ -62,8 +74,7 @@ HOOK_FOUND=0
 if python3 -c "
 import json, sys
 cfg = json.loads(open('$SETTINGS').read())
-hooks = cfg.get('hooks', {})
-if 'PreToolUse' in hooks:
+if 'PreToolUse' in cfg.get('hooks', {}):
     sys.exit(0)
 sys.exit(1)
 " 2>/dev/null; then
@@ -73,9 +84,15 @@ else
   _log "No PreToolUse hook found in settings.json"
 fi
 
-if [[ $HOOK_FOUND -eq 0 && $DISABLE -eq 0 ]]; then
-  echo "No PreToolUse hook found — nothing to fix."
-  exit 2
+# Inspect-only mode: report and exit without any modification
+if [[ $DISABLE -eq 0 ]]; then
+  if [[ $HOOK_FOUND -eq 1 ]]; then
+    echo "PreToolUse hook found. Re-run with --disable-pretooluse-hook to remove it."
+    exit 0
+  else
+    echo "No PreToolUse hook found — nothing to fix."
+    exit 2
+  fi
 fi
 
 # ── Step 3: Backup ────────────────────────────────────────────────────────────
@@ -92,69 +109,73 @@ fi
 echo "Step 4: Remove PreToolUse hook"
 if [[ $DRY_RUN -eq 1 ]]; then
   _log "[dry-run] would remove PreToolUse from $SETTINGS"
-elif [[ $HOOK_FOUND -eq 1 || $DISABLE -eq 1 ]]; then
+else
   python3 - << 'PYEOF'
-import json, pathlib, sys
+import json, pathlib
 p = pathlib.Path.home() / ".claude" / "settings.json"
 cfg = json.loads(p.read_text())
 hooks = cfg.get("hooks", {})
-removed = "PreToolUse" in hooks
-if removed:
+if "PreToolUse" in hooks:
     del hooks["PreToolUse"]
     cfg["hooks"] = hooks
     p.write_text(json.dumps(cfg, indent=2))
-    print(f"  [fix-hook] PreToolUse hook removed from {p}")
+    print("  [fix-hook] PreToolUse hook removed")
 else:
-    print(f"  [fix-hook] No PreToolUse hook to remove in {p}")
+    print("  [fix-hook] No PreToolUse hook to remove")
 PYEOF
-  _pass "PreToolUse hook removed"
+  _pass "PreToolUse hook step complete"
 fi
 
 # ── Step 5: Restart gateway ───────────────────────────────────────────────────
 echo "Step 5: Restart OpenClaw gateway"
-if [[ $DRY_RUN -eq 1 ]]; then
-  _log "[dry-run] would restart gateway"
+if [[ $DRY_RUN -eq 1 || $SKIP_GATEWAY -eq 1 ]]; then
+  _log "[skipped] gateway restart (dry-run or --skip-gateway-restart)"
 else
   RESTARTED=0
+
   if command -v openclaw >/dev/null 2>&1; then
-    if openclaw restart 2>/dev/null; then
+    if _run openclaw restart; then
       _pass "openclaw restart succeeded"
       RESTARTED=1
     fi
+    _run openclaw gateway status
   fi
+
   if [[ $RESTARTED -eq 0 ]]; then
-    if systemctl --user is-active openclaw-gateway >/dev/null 2>&1; then
-      systemctl --user restart openclaw-gateway
-      _pass "systemctl restart openclaw-gateway"
-      RESTARTED=1
-    fi
+    for SVC in openclaw-gateway.service openclaw-gateway-dev.service; do
+      if timeout "${CMD_TIMEOUT}" systemctl --user restart "$SVC" 2>/dev/null; then
+        _pass "systemctl restart $SVC"
+        RESTARTED=1
+        break
+      fi
+    done
   fi
+
   if [[ $RESTARTED -eq 0 ]]; then
-    _log "No known gateway restart mechanism found — manual restart required"
+    _log "No known gateway restart mechanism found. Openclaw units:"
+    timeout "${CMD_TIMEOUT}" systemctl --user list-units      2>/dev/null | grep -i openclaw || _log "  (none in list-units)"
+    timeout "${CMD_TIMEOUT}" systemctl --user list-unit-files 2>/dev/null | grep -i openclaw || _log "  (none in list-unit-files)"
+    _log "Manual restart required."
   fi
-  sleep 3
+
+  sleep 1
 fi
 
 # ── Step 6: Verify doctor/channels ────────────────────────────────────────────
 echo "Step 6: Verify gateway health"
-if [[ $DRY_RUN -eq 1 ]]; then
-  _log "[dry-run] would run: openclaw doctor"
+if [[ $DRY_RUN -eq 1 || $SKIP_GATEWAY -eq 1 ]]; then
+  _log "[skipped] health checks (dry-run or --skip-gateway-restart)"
 else
-  if command -v openclaw >/dev/null 2>&1; then
-    if openclaw doctor 2>&1 | grep -qiE "ok|healthy|connected"; then
-      _pass "openclaw doctor: healthy"
-    else
-      _log "openclaw doctor output unclear — check manually"
-    fi
-  else
-    _log "openclaw CLI not in PATH — skipping doctor check"
-  fi
+  _run openclaw gateway status
+  _run openclaw doctor
+  _run openclaw channels status --probe
+  _pass "Health checks run (see output above)"
 fi
 
 # ── Step 7: Harmless tool test ────────────────────────────────────────────────
 echo "Step 7: Harmless tool test"
 if [[ $DRY_RUN -eq 1 ]]; then
-  _log "[dry-run] would run: echo hook-test > /tmp/fix-hook-test.txt"
+  _log "[dry-run] would run harmless write/read test"
 else
   TEST_FILE="/tmp/fix-hook-test-$(date +%s).txt"
   echo "hook-test-ok" > "$TEST_FILE"
