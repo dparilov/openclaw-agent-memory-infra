@@ -36,10 +36,12 @@ L4  Canonical Docs docs/ + .agent/AGENT_CONTEXT.md  Architecture, runbooks, ADR
 
 ## First Time? Start Here
 
-→ **[Setup Wizard Flow](docs/SETUP_WIZARD_FLOW.md)** — canonical 9-phase onboarding: environment gates, target project selection, topic resolution, scaffold, config activation, indexing, and agent instruction pack. **Start here.**
+→ **[Setup Wizard Flow](docs/SETUP_WIZARD_FLOW.md)** — starts with **Phase 0 path selection**: Full Environment Cold Start (A), Fast Project Onboarding — repeated onboarding without full re-audit (B), Repair/Resume (C), or Audit Only (D). Then covers environment gates, target project selection, scaffold, config activation, indexing, and agent instruction pack. **Start here.**
 → **[Full Environment Onboarding](docs/FULL_ENVIRONMENT_ONBOARDING.md)** — detailed gate reference (A–K) used by the wizard for environment checks.
 → **[Bootstrap Prerequisites](docs/BOOTSTRAP_PREREQUISITES.md)** — concise prerequisites-only checklist if your environment is already set up.
 → **[Final Agent Instruction Pack](docs/FINAL_AGENT_INSTRUCTION_PACK.md)** — ready-to-send prompts for infra/coder/reviewer agents (produced by wizard Phase 8).
+→ **[OAuth Gate Cards](docs/OAUTH_GATE_CARDS.md)** — deterministic remediation cards for auth failures: Codex headless OAuth, VPS browser login SSH tunnel, device-pairing stale endpoint, OpenClaw 2026.5 config migration.
+→ **[Cold Test Findings 2026-05-04](docs/COLD_TEST_FINDINGS_2026-05-04.md)** — 8 findings from the first live Phase 1 cold run: Phase 1 target-project-agnostic rule, Fast Preflight, OAuth human-operated gates, security ACK scoping.
 
 All documents can be used with any external assistant (ChatGPT, Claude web, etc.) to walk
 through setup step by step and produce an explicit READY / NOT READY verdict.
@@ -275,7 +277,9 @@ See `docs/SKILL_VOCABULARY.md` for decision guide on when to call each skill.
 │   ├── bootstrap.sh            Quick bootstrap script
 │   └── memory/
 ├── docs/
-│   ├── SETUP_WIZARD_FLOW.md    Canonical 9-phase setup wizard (primary onboarding)
+│   ├── SETUP_WIZARD_FLOW.md    Canonical setup wizard with Phase 0 path selection (primary onboarding)
+│   ├── OAUTH_GATE_CARDS.md     Auth failure remediation cards (OA-1 through OA-8)
+│   ├── COLD_TEST_FINDINGS_2026-05-04.md  Phase 1 cold run findings (8 items)
 │   ├── TARGET_PROJECT_SELECTION.md  Project selection modes and ACK format
 │   ├── FINAL_AGENT_INSTRUCTION_PACK.md  Ready-to-send agent prompts (wizard Phase 8)
 │   ├── FULL_ENVIRONMENT_ONBOARDING.md  Environment gate reference (A–K)
