@@ -499,3 +499,51 @@ class TestDryRunSyncToolsConflict:
                 op.main(self.REQUIRED + ["--sync-tools"])
             except SystemExit:
                 pass  # subprocess failures are fine; conflict guard must not fire
+
+
+# ---------------------------------------------------------------------------
+# 10. Next-step wording — tools up to date
+# ---------------------------------------------------------------------------
+
+class TestNextStepWording:
+    """Verify the next-step message when all tools are up to date (no writes needed)."""
+
+    REQUIRED = [
+        "--target", "/tmp/fake-repo",
+        "--repo", "https://github.com/test/repo",
+        "--chat-id", "-123",
+        "--infra-topic", "1",
+        "--coder-topic", "2",
+        "--reviewer-topic", "3",
+        "--escalation", "@user",
+    ]
+
+    def test_next_step_says_indexing_write_approval(self, capsys):
+        """When all tools are UNCHANGED and no --sync-tools, next step must say
+        'Proceed to initial indexing write approval.' (not 'memory archiving phase')."""
+        all_unchanged = [
+            op.ToolDiff("foo.py", "UNCHANGED", ""),
+            op.ToolDiff("bar.py", "UNCHANGED", ""),
+        ]
+        with patch.object(op, "run_preflight", return_value=[]), \
+             patch.object(op, "detect_scaffold", return_value=[]), \
+             patch.object(op, "compute_tool_diff", return_value=all_unchanged), \
+             patch.object(op, "run_index_dryruns", return_value=[]), \
+             patch("pathlib.Path.exists", return_value=True), \
+             patch("pathlib.Path.is_dir", return_value=True):
+            op.main(self.REQUIRED)
+        out = capsys.readouterr().out
+        assert "Proceed to initial indexing write approval." in out
+        assert "memory archiving phase" not in out
+
+    def test_old_wording_absent(self, capsys):
+        """The old 'memory archiving phase' wording must never appear in output."""
+        with patch.object(op, "run_preflight", return_value=[]), \
+             patch.object(op, "detect_scaffold", return_value=[]), \
+             patch.object(op, "compute_tool_diff", return_value=[]), \
+             patch.object(op, "run_index_dryruns", return_value=[]), \
+             patch("pathlib.Path.exists", return_value=True), \
+             patch("pathlib.Path.is_dir", return_value=True):
+            op.main(self.REQUIRED)
+        out = capsys.readouterr().out
+        assert "memory archiving phase" not in out
