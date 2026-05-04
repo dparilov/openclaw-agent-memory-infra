@@ -37,6 +37,41 @@ At the end of each phase, the wizard presents one of four choices:
 
 ---
 
+## Path Selection — Choose Setup Mode
+
+Before starting Phase 0, select the appropriate setup path. The wizard must present
+these options and wait for explicit operator selection. It must not auto-select.
+
+| Path | Label | When to use |
+|------|-------|-------------|
+| A | Full Environment Cold Start | First-time setup, or unknown/unverified environment state |
+| B | Fast Project Onboarding | Environment recently verified; onboarding a new project |
+| C | Repair / Resume | Previous wizard run left open blockers; known partial state |
+| D | Audit Only | Read-only status check; no changes to be made |
+
+**Path A** → run all phases (Phase 0 through Phase 9).
+**Path B** → run Fast Preflight (see below) instead of full Phase 1, then skip to Phase 2.
+**Path C** → load last known gate state; resume from first open blocker.
+**Path D** → run Phase 0 and Phase 1 in read-only mode; produce audit report only.
+
+### Fast Preflight (Path B)
+
+Used when the environment was recently audited. Checks only:
+
+1. memory-infra repo current (`git fetch --dry-run`; confirm branch/SHA)
+2. OpenClaw gateway reachable (`openclaw status`)
+3. Telegram transport healthy (bot polling `in:just now`)
+4. GitHub auth valid (`gh auth status`)
+5. Required role models available and authenticated (`openclaw models status`)
+6. Security ACK still valid (issued within last 30 days; environment/groupPolicy unchanged)
+
+**Hard rule:** Target repo is NOT checked in Fast Preflight. It is checked only after
+`PROJECT_TARGET_ACK` in Phase 2.
+
+If any Fast Preflight check fails → run full Phase 1 for the failing gate, or escalate to Path C.
+
+---
+
 ## Phase 0 -- Repo Orientation
 
 **Goal:** Confirm the operator understands what this repo is and is not.
@@ -60,6 +95,11 @@ Stop condition: None. Always proceeds to Phase 1.
 
 ## Phase 1 -- Environment Readiness
 
+> **HARD RULE: Phase 1 is target-project agnostic.**
+> No product repo URL, branch, `.agent/` scaffold status, topic role assumptions, or
+> project-specific blocker language may appear in Phase 1 output before `PROJECT_TARGET_ACK`
+> is issued in Phase 2. Gates B2/C check the memory-infra repo only. Any other repo is Phase 2+.
+
 **Goal:** All gates A-J pass (Gate S optional).
 
 **Follow:** `docs/FULL_ENVIRONMENT_ONBOARDING.md` gate by gate.
@@ -74,7 +114,7 @@ Stop condition: None. Always proceeds to Phase 1.
 | E | OpenClaw installed | yes |
 | F | Telegram integration | yes |
 | G | Model providers | yes |
-| H | Codex OAuth | no (N/A if not using Codex) |
+| H | Codex OAuth | no (N/A if not using Codex); see `docs/OAUTH_GATE_CARDS.md` OA-4 to OA-7 |
 | I | MeridianA install | no (N/A if not using meridiana/* aliases) |
 | J | Topic planning | yes |
 | S | Security (groupPolicy) | no (CRITICAL items require ACK) |
@@ -338,6 +378,27 @@ WIZARD STATE: Phase <N> -- <reason>
 ```
 
 See `docs/EXTERNAL_TO_INFRA_HANDOFF.md`.
+
+---
+
+## Appendix: Gate Remediation Card Format
+
+Every FAIL or WARN gate must output a remediation card in this exact format
+(mark N/A for options that do not apply):
+
+```
+Remediation options:
+A. Fix now — exact commands: ...
+B. Mark N/A — condition: ...
+C. Choose alternate model — command: ...
+D. Continue with WARN — ACK required: ...
+E. STOP — reason: ...
+```
+
+The wizard waits for operator selection. It does not auto-select.
+
+For auth-specific remediation cards, see `docs/OAUTH_GATE_CARDS.md`.
+For cold-run process findings, see `docs/COLD_TEST_FINDINGS_2026-05-04.md`.
 
 ---
 
