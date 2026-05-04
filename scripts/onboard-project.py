@@ -725,7 +725,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     if not args.create_pr and args.sync_tools:
         next_steps.append("Re-run with --create-pr to open a PR for the synced tools")
     if not next_steps:
-        next_steps.append("Tools are up to date. Proceed to memory archiving phase.")
+        next_steps.append("Tools are up to date. Proceed to initial indexing write approval.")
 
     return _report(EXIT_SUCCESS if not blockers else EXIT_VALIDATION)
 

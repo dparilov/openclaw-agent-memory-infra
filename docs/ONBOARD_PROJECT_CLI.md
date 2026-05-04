@@ -158,3 +158,28 @@ The following are explicitly out of scope for this PR:
 | `--branch NAME` | `infra/sync-agent-tools-YYYY-MM-DD` | Override PR branch name |
 | `--base-branch NAME` | current branch | PR base branch |
 | `--commit-message MSG` | `infra: sync agent context tools` | Commit message |
+
+## Current Status: MVP Helper, Not Final Fixed Setup
+
+`onboard-project.py` is the first deterministic layer. It replaces a large part
+of the manual prompt-driven flow, but it is not yet the final fixed setup wizard.
+
+It currently automates:
+- fast preflight
+- target validation
+- scaffold detection
+- infra-managed tool sync check
+- optional tool sync PR
+- initial-index dry-run
+
+It does not yet own the full setup state machine:
+- environment remediation
+- model/OAuth remediation
+- topic-level role verification
+- initial-index write approval
+- sensitive data review
+- final live verification
+- rollback/recovery flows
+
+The product direction is to evolve this into a real fixed setup flow where the
+human only approves explicit decision points.
