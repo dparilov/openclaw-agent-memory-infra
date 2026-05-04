@@ -360,6 +360,15 @@ def execute_git_pr(
     if not to_stage:
         return False, "Nothing to stage"
 
+    # Fix 1: fail-fast on branch mismatch when --base-branch is explicitly provided
+    if base_branch is not None:
+        rc, current_branch, _ = _run(["git", "-C", str(target), "rev-parse", "--abbrev-ref", "HEAD"])
+        if rc == 0 and current_branch and current_branch != base_branch:
+            return False, (
+                f"Current target branch is '{current_branch}', but --base-branch is '{base_branch}'. "
+                f"Checkout '{base_branch}' first or rerun without --create-pr."
+            )
+
     if base_branch is None:
         rc, stdout, _ = _run(["git", "-C", str(target), "rev-parse", "--abbrev-ref", "HEAD"])
         base_branch = stdout if rc == 0 and stdout else "master"
@@ -584,6 +593,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
 
     if args.mode != "fast":
         print(f"ERROR: --mode {args.mode!r} is not implemented in PR27 MVP. Use --mode fast.", file=sys.stderr)
+        return EXIT_VALIDATION
+
+    # Fix 2: --dry-run and --sync-tools are mutually exclusive
+    if args.dry_run and args.sync_tools:
+        print("ERROR: --dry-run cannot be combined with --sync-tools", file=sys.stderr)
         return EXIT_VALIDATION
 
     script_dir = Path(__file__).resolve().parent
