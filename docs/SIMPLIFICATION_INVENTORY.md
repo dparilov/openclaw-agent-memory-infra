@@ -178,10 +178,28 @@ A file is **DEPRECATE_FOR_V1** if it:
 
 ---
 
+## Resolved Decisions (from PR30 review)
+
+- **D-1 — output formats:** Coexist. `topic-<id>.md` = raw append log (archive layer). `working/*.md` = compiled reviewed memory pack (agent startup layer). Do not make `archive-batch-v2.py` write directly to `working/*.md`.
+- **D-14 — agent startup load order:** `.agent-template/AGENT_CONTEXT.md` to be updated in PR2 to reflect: (1) AGENT_CONTEXT.md, (2) agent-brief.md, (3) current-state.md, (4) known-issues.md, (5) optional decisions/open-questions. Rule: do not run full `read-topic` on startup; use it only on explicit operator request.
+
+## Deferred Decisions (non-blocking for v1)
+
+D-2 through D-13 are deferred cleanup and documentation decisions. They must not block PR2 or PR3.
+
+| Deferred | Item |
+|----------|------|
+| D-2 | `recover-memory` skill scope |
+| D-3 | README rewrite |
+| D-4 | MeridianA docs relevance |
+| D-5 | `FINAL_AGENT_INSTRUCTION_PACK` |
+| D-6 | `PRE_LIVE_CHECKLIST` wiki references |
+| D-7 | `SKILL_VOCABULARY` update |
+| D-8–D-13 | Test and doc cleanup items |
+
 ## Blockers
 
-None for this PR. The inventory does not change any code or delete any files.  
-Decisions D-1 through D-14 should be resolved before implementation PRs begin.
+None. D-1 and D-14 are resolved. D-2 through D-13 are deferred and must not block the simplified v1 path.
 
 ---
 
@@ -189,7 +207,7 @@ Decisions D-1 through D-14 should be resolved before implementation PRs begin.
 
 | PR | Scope |
 |----|-------|
-| **PR2** | Resolve D-1 (output format decision) and update `.agent-template/AGENT_CONTEXT.md` to reflect v1 startup load order |
-| **PR3** | Implement `scripts/extract-memory.py` — deterministic context prep + extraction prompt builder (no LLM API calls inside the script) |
-| **PR4** | Update README.md to describe v1 flow; deprecate SETUP_WIZARD_FLOW and FULL_ENVIRONMENT_ONBOARDING |
-| **PR5** | Remove REMOVE_LATER test files once their source modules are formally deprecated |
+| **PR2** | Update `.agent-template/AGENT_CONTEXT.md` with v1 startup load order (D-14); record D-1 coexistence decision |
+| **PR3** | Implement `scripts/extract-memory.py` — deterministic context prep + extraction prompt builder (no LLM API calls) |
+| **PR4** | Update README.md to describe v1 flow; mark SETUP_WIZARD_FLOW and FULL_ENVIRONMENT_ONBOARDING as `[HEAVY — not v1 path]` |
+| **PR5** | Deferred cleanup — remove REMOVE_LATER test files once source modules formally deprecated |
