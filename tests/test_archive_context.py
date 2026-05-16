@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import sys
+import tempfile
+import unittest
 from pathlib import Path
 
 import pytest
@@ -531,7 +534,7 @@ class TestErrorHandling:
     def test_out_override_used(self, tmp_path):
         target = tmp_path / "proj"
         target.mkdir()
-        custom_out = tmp_path / "custom_out"
+        custom_out = target / "custom_out"  # must be inside target (Fix 3)
         input_file = _write(tmp_path / "ctx.md", "hello")
 
         _run([
@@ -560,3 +563,115 @@ class TestErrorHandling:
         ])
         chunk = (target / ".agent" / "memory" / "raw" / "topic-7301" / "chunk-0001.md")
         assert '-1003596522926' in chunk.read_text()
+
+
+class TestChunkSizeValidation(unittest.TestCase):
+    """Fix 2: --chunk-size must be a positive integer."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.target = Path(self.tmp) / "proj"
+        self.target.mkdir()
+        self.inp = Path(self.tmp) / "input.md"
+        self.inp.write_text("hello\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def _args(self, chunk_size):
+        return [
+            "--target", str(self.target),
+            "--topic", "9999",
+            "--role", "coder",
+            "--input", str(self.inp),
+            "--source-type", "markdown_export",
+            "--chunk-size", str(chunk_size),
+        ]
+
+    def test_chunk_size_zero_fails(self):
+        self.assertEqual(ac.main(self._args(0)), 1)
+
+    def test_chunk_size_negative_fails(self):
+        self.assertEqual(ac.main(self._args(-1)), 1)
+
+
+class TestOverwriteGuard(unittest.TestCase):
+    """Fix 1: existing chunk-*.md in output dir blocks write mode."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.target = Path(self.tmp) / "proj"
+        self.target.mkdir()
+        self.inp = Path(self.tmp) / "input.md"
+        self.inp.write_text("line one\nline two\n")
+        self.out_dir = self.target / ".agent" / "memory" / "raw" / "topic-9999"
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def _args(self, write=False):
+        args = [
+            "--target", str(self.target),
+            "--topic", "9999",
+            "--role", "coder",
+            "--input", str(self.inp),
+            "--source-type", "markdown_export",
+        ]
+        if write:
+            args.append("--write")
+        return args
+
+    def test_existing_chunk_blocks_write(self):
+        self.out_dir.mkdir(parents=True)
+        (self.out_dir / "chunk-0001.md").write_text("old content")
+        self.assertEqual(ac.main(self._args(write=True)), 1)
+
+    def test_existing_chunk_not_modified(self):
+        self.out_dir.mkdir(parents=True)
+        existing = self.out_dir / "chunk-0001.md"
+        existing.write_text("old content")
+        ac.main(self._args(write=True))
+        self.assertEqual(existing.read_text(), "old content")
+
+    def test_dry_run_does_not_fail_on_existing_chunks(self):
+        self.out_dir.mkdir(parents=True)
+        (self.out_dir / "chunk-0001.md").write_text("old content")
+        self.assertEqual(ac.main(self._args(write=False)), 0)
+
+
+class TestOutDirContainment(unittest.TestCase):
+    """Fix 3: --out must resolve inside --target."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.target = Path(self.tmp) / "proj"
+        self.target.mkdir()
+        self.inp = Path(self.tmp) / "input.md"
+        self.inp.write_text("hello\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def _args(self, out=None):
+        args = [
+            "--target", str(self.target),
+            "--topic", "9999",
+            "--role", "coder",
+            "--input", str(self.inp),
+            "--source-type", "markdown_export",
+        ]
+        if out is not None:
+            args += ["--out", out]
+        return args
+
+    def test_out_inside_target_passes(self):
+        inside = str(self.target / "custom_out")
+        self.assertEqual(ac.main(self._args(out=inside)), 0)
+
+    def test_out_outside_target_fails(self):
+        outside = str(Path(self.tmp) / "outside")
+        self.assertEqual(ac.main(self._args(out=outside)), 1)
+
+    def test_dotdot_escape_fails(self):
+        escape = str(self.target / ".." / "escape")
+        self.assertEqual(ac.main(self._args(out=escape)), 1)

@@ -367,6 +367,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    # Fix 2: validate chunk size
+    if args.chunk_size <= 0:
+        print(
+            f"ERROR: --chunk-size must be a positive integer, got: {args.chunk_size}",
+            file=sys.stderr,
+        )
+        return 1
+
     target = Path(args.target)
     input_path = Path(args.input_path)
 
@@ -381,6 +389,20 @@ def main(argv: list[str] | None = None) -> int:
     content = input_path.read_text(encoding="utf-8", errors="replace")
     chunks = split_into_chunks(content, args.source_type, args.chunk_size)
     out_dir = resolve_out_dir(target, args.topic, args.out)
+
+    # Fix 3: --out must resolve inside --target
+    if args.out:
+        try:
+            out_dir.resolve().relative_to(target.resolve())
+        except ValueError:
+            print(
+                f"ERROR: --out must resolve inside --target\n"
+                f"  target: {target.resolve()}\n"
+                f"  out:    {Path(args.out).resolve()}",
+                file=sys.stderr,
+            )
+            return 1
+
     created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Redact each chunk body
@@ -403,6 +425,18 @@ def main(argv: list[str] | None = None) -> int:
             created_at=created_at,
         ))
         return 0
+
+    # Fix 1: prevent accidental overwrite
+    existing_chunks = sorted(out_dir.glob("chunk-*.md")) if out_dir.exists() else []
+    if existing_chunks:
+        sample = ", ".join(p.name for p in existing_chunks[:3])
+        suffix = " ..." if len(existing_chunks) > 3 else ""
+        print(
+            f"ERROR: output directory already contains chunk files: {out_dir}\n"
+            f"  found: {len(existing_chunks)} file(s): {sample}{suffix}",
+            file=sys.stderr,
+        )
+        return 1
 
     # Write mode
     out_dir.mkdir(parents=True, exist_ok=True)
