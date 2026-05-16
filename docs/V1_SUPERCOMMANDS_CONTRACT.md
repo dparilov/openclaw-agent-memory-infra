@@ -3,7 +3,7 @@
 > Defines two user-facing commands that hide the low-level v1 memory pipeline.
 >
 > This is a contract document — not implementation.
-> Implementation is PR37 (refresh_memory) and PR38 (recover_memory).
+> Implementation is PR37 (recover-memory) and PR38 (refresh-memory).
 
 ---
 
@@ -19,15 +19,15 @@ Low-level pipeline (implemented):
   compile-working-memory.py
 
 User-facing layer (this contract):
-  refresh_memory   — ingestion + compile in one command
-  recover_memory   — load saved memory for agent startup
+  refresh-memory   — ingestion + compile in one command
+  recover-memory   — load saved memory for agent startup
 ```
 
 ---
 
 ## Commands
 
-### `refresh_memory`
+### `refresh-memory`
 
 **Purpose:**
 
@@ -50,7 +50,7 @@ It **must not** run silently on startup or heartbeat.
 
 ---
 
-### `recover_memory`
+### `recover-memory`
 
 **Purpose:**
 
@@ -97,7 +97,7 @@ It **must not** read:
 
 ## Command semantics
 
-### `refresh_memory` semantics
+### `refresh-memory` semantics
 
 #### Inputs
 
@@ -155,7 +155,7 @@ Explicit source, one of:
 
 ---
 
-### `recover_memory` semantics
+### `recover-memory` semantics
 
 #### Inputs
 
@@ -202,45 +202,47 @@ Explicit source, one of:
 
 ## Proposed CLI shapes
 
-### `refresh_memory`
+### `refresh-memory`
 
 ```bash
 # Dry-run (default) — local input
-python3 scripts/refresh_memory.py \
+python3 scripts/refresh-memory.py \
   --target /path/to/project \
-  --topics 7301:coder,13350:reviewer \
-  --input /path/to/context.md \
-  --source-type markdown_export
-
-# Write mode — local input
-python3 scripts/refresh_memory.py \
-  --target /path/to/project \
-  --topics 7301:coder,13350:reviewer \
-  --input /path/to/context.md \
-  --source-type markdown_export \
-  --notes /path/to/operator-notes.md \
-  --write
+  --topic 15222:infra \
+  --input /path/to/session.jsonl \
+  --source-type session_jsonl \
+  --dry-run
 
 # Dry-run — bounded Telegram read (explicit only)
-python3 scripts/refresh_memory.py \
+python3 scripts/refresh-memory.py \
   --target /path/to/project \
-  --topics 7301:coder \
+  --topic 15222:infra \
   --read-topic \
-  --chat-id -1001234567890 \
-  --limit 200
+  --chat-id -1003596522926 \
+  --limit 200 \
+  --dry-run
+
+# Write mode — local Markdown export, multiple topics
+python3 scripts/refresh-memory.py \
+  --target /path/to/project \
+  --topics 7301:coder,13350:reviewer,15222:infra \
+  --input /path/to/export.md \
+  --source-type markdown_export \
+  --write
 ```
 
-### `recover_memory`
+### `recover-memory`
 
 ```bash
 # Default — print recovery summary
-python3 scripts/recover_memory.py \
+python3 scripts/recover-memory.py \
   --target /path/to/project
 
-# With topic filter
-python3 scripts/recover_memory.py \
+# With topic + role filter
+python3 scripts/recover-memory.py \
   --target /path/to/project \
-  --topics 7301:coder
+  --topic 7301 \
+  --role coder
 ```
 
 ---
@@ -249,30 +251,30 @@ python3 scripts/recover_memory.py \
 
 | User action | Internal calls |
 |-------------|----------------|
-| `refresh_memory --input ... --write` | `archive-context.py --write` → `compile-working-memory.py --write` |
-| `refresh_memory --read-topic ... --write` | `read-topic.py` (bounded) → `archive-context.py --write` → `compile-working-memory.py --write` |
-| `refresh_memory` (dry-run) | `archive-context.py` (dry-run) → `compile-working-memory.py` (dry-run) |
-| `recover_memory` | Read `working/*.md` → print summary |
+| `refresh-memory --input ... --write` | `archive-context.py --write` → `compile-working-memory.py --write` |
+| `refresh-memory --read-topic ... --write` | `read-topic.py` (bounded) → `archive-context.py --write` → `compile-working-memory.py --write` |
+| `refresh-memory` (dry-run) | `archive-context.py` (dry-run) → `compile-working-memory.py` (dry-run) |
+| `recover-memory` | Read `working/*.md` → print summary |
 
 ---
 
 ## Success criteria
 
-- [ ] `refresh_memory --write` produces same output as running `archive-context.py --write` + `compile-working-memory.py --write` manually
-- [ ] `refresh_memory` (dry-run default) writes nothing
-- [ ] `recover_memory` prints usable startup context from `working/*.md` alone
-- [ ] `recover_memory` reports missing/stale files without crashing
+- [ ] `refresh-memory --write` produces same output as running `archive-context.py --write` + `compile-working-memory.py --write` manually
+- [ ] `refresh-memory` (dry-run default) writes nothing
+- [ ] `recover-memory` prints usable startup context from `working/*.md` alone
+- [ ] `recover-memory` reports missing/stale files without crashing
 - [ ] No LLM API calls in scripts
 - [ ] No vector DB, embeddings, or memory-core
-- [ ] No Telegram reads in `recover_memory`
-- [ ] No `read-topic` in `refresh_memory` unless `--read-topic` explicitly passed
+- [ ] No Telegram reads in `recover-memory`
+- [ ] No `read-topic` in `refresh-memory` unless `--read-topic` explicitly passed
 - [ ] No auto-commit or auto-push
 
 ---
 
 ## Startup recall test
 
-After `recover_memory`, a fresh agent must be able to answer without `read-topic`, raw chunk reading, or vector search:
+After `recover-memory`, a fresh agent must be able to answer without `read-topic`, raw chunk reading, or vector search:
 
 1. What is this project?
 2. What is the current objective?
@@ -289,4 +291,4 @@ After `recover_memory`, a fresh agent must be able to answer without `read-topic
 | `docs/V1_CONTEXT_ARCHIVE_CONTRACT.md` | Ingest layer — explicit input → raw chunks |
 | `docs/V1_WORKING_MEMORY_COMPILE_CONTRACT.md` | Compile layer — raw chunks → working memory |
 | **This document** | Supercommand layer — user-facing wrappers |
-| `.agent-template/AGENT_CONTEXT.md` | Startup load order consumed by `recover_memory` |
+| `.agent-template/AGENT_CONTEXT.md` | Startup load order consumed by `recover-memory` |
