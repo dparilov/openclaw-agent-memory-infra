@@ -155,14 +155,118 @@ The final v1 agent startup memory is:
 
 ## Sensitive Data Policy
 
+The archive layer may contain redacted source context.  
+Compiled working memory (`working/*.md`) must **never** contain raw secrets.
+
 Archive scripts must:
-- Detect credential patterns (tokens, keys, passwords, PEM blocks) before writing
+- Detect credential patterns (tokens, keys, passwords, private keys, PEM blocks, API keys) before writing
 - Mask detected values — write `[REDACTED:<category>]` in place of the value
 - Set `redaction_status: redacted` in the chunk header if any masking occurred
-- Set `redaction_status: needs_review` if a pattern was detected but could not be masked automatically
+- Set `redaction_status: needs_review` if a pattern was detected but could not be safely masked; operator must review before promotion
 - **Never** write raw credential values to disk, even in `raw/`
+- **Never** print or log raw secrets to stdout/stderr
 
-Detection uses the pattern set already defined in `initial-index.py` (`SENSITIVE_PATTERNS`). The archive tool imports or replicates this list — no separate sensitivity model required.
+The compilation step (raw → working/*.md) must not promote any chunk with `redaction_status: needs_review` without explicit operator acknowledgement.
+
+Detection reuses the pattern set from `initial-index.py` (`SENSITIVE_PATTERNS`). No separate sensitivity model required for v1.
+
+---
+
+## Git Policy
+
+Generated/private artifacts are gitignored — never commit by default:
+
+```gitignore
+.agent/memory/raw/
+.agent/memory/index/
+.agent/memory/candidates/
+.agent/memory/.locks/
+```
+
+Reviewed compiled Markdown may be committed after human review:
+
+```
+.agent/memory/working/*.md     ✅ commit after review
+.agent/memory/promoted/*.md    ✅ commit after review
+.agent/memory/wiki/*.md        ✅ commit after review (optional, future)
+```
+
+Raw archive chunks must not be committed. Working memory is committed only after the operator reviews the diff.
+
+---
+
+## read-topic Policy
+
+`read-topic.py` is allowed **only** as an explicit operator-requested ingestion command.
+
+Default behaviour when used through the archive tool:
+- Always bounded: `--limit`, `--since-id`, `--since`/`--until`, or explicit topic/window scope
+- Dry-run available: show what would be fetched before writing
+- Full unbounded reads require an explicit `--confirm-large-read` flag
+- Never invoked silently on startup, heartbeat, or scheduled trigger
+
+```bash
+# Bounded by message count (default safe path)
+memory-extract read-topic --topic 7301 --limit 200 --dry-run
+
+# Bounded by message ID
+memory-extract read-topic --topic 7301 --since-id 18000 --dry-run
+
+# Full read — requires explicit confirmation flag
+memory-extract read-topic --topic 7301 --confirm-large-read
+```
+
+---
+
+## CLI Shape (Contract, Not Final Implementation)
+
+The v1 archive tool (`memory-extract`) exposes two commands:
+
+### `archive-session` — ingest from local session JSONL
+
+```bash
+memory-extract archive-session \
+  --target /path/to/project \
+  --topic 7301 \
+  --role coder \
+  --input ~/.openclaw/agents/main/sessions/<file>.jsonl \
+  --out .agent/memory/raw/topic-7301/ \
+  --dry-run
+```
+
+### `read-topic` — ingest from live Telegram topic (bounded)
+
+```bash
+memory-extract read-topic \
+  --target /path/to/project \
+  --chat-id -1003596522926 \
+  --topic 7301 \
+  --role coder \
+  --limit 200 \
+  --out .agent/memory/raw/topic-7301/ \
+  --dry-run
+```
+
+Both commands:
+- Default to `--dry-run` (no files written unless flag is removed)
+- Write `chunk-NNNN.md` files with YAML front-matter
+- Apply sensitive data detection and masking before write
+- Print a summary of chunks that would be written (or were written)
+- Never touch `.agent/memory/working/` — that is the compilation step
+
+---
+
+## Success Criteria
+
+The v1 archive layer is complete when:
+
+- [ ] Context can be archived into Markdown chunks from at least one explicit input source (session JSONL or bounded read-topic)
+- [ ] No vector DB or embeddings required at any step
+- [ ] No LLM API call inside the archive script
+- [ ] No target project memory is touched unless `--target` is explicitly provided
+- [ ] Raw/archive chunks remain gitignored and not committed by default
+- [ ] The compilation step (next PR) can consume chunks from this path
+- [ ] Existing topic contexts (7301 coder, 13350 reviewer, 15222 infra) can be ingested through this path
 
 ---
 
@@ -179,5 +283,6 @@ raw chunks + operator notes
   → commit working/*.md
 ```
 
-The extraction pass is **not** part of this contract. It is defined in the next PR.  
-This contract covers only the ingest → raw chunk step.
+The extraction pass is **not** part of this contract. It is defined in PR5 (working memory pack generator).  
+This contract (PR3) covers only the ingest → raw chunk step.  
+PR4 implements the minimal archive command (`memory-extract`).
