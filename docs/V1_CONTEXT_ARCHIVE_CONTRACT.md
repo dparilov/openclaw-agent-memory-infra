@@ -48,7 +48,7 @@ Allowed input sources (all must be **explicit** — no silent reads):
 | Bounded Pyrogram/read-topic output | `read-topic.py <topic-id> --limit N` or `--since-id <id>`, explicitly invoked by operator |
 | Local OpenClaw session JSONL | Path passed explicitly to the archive tool |
 | Existing Markdown context export | Path passed explicitly |
-| `.agent/AGENT_CONTEXT.md` | Read automatically at startup (project identity only) |
+| `.agent/AGENT_CONTEXT.md` | Read by the compile step as project identity context when `--target` is explicitly provided |
 | Operator notes | Plain text or Markdown file passed explicitly |
 
 The tool must **not**:
