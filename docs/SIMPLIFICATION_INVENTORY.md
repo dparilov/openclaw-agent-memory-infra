@@ -211,6 +211,9 @@ None. D-1 and D-14 are resolved. D-2 through D-13 are deferred and must not bloc
 | **PR3** | Define V1 context archive contract (`docs/V1_CONTEXT_ARCHIVE_CONTRACT.md`) — ingest to raw chunk spec, CLI shape, success criteria — ✅ merged (GitHub PR32) |
 | **PR4** | Implement minimal `scripts/archive-context.py` with 55 tests; safety guards (overwrite, chunk-size, out-containment) — ✅ merged (GitHub PR33) |
 | **PR34** | Define working memory compile contract (`docs/V1_WORKING_MEMORY_COMPILE_CONTRACT.md`) — compile layer spec, CLI shape, success criteria |
-| **PR35** | Implement minimal `scripts/compile-working-memory.py` (raw chunks → draft `working/*.md`) |
+| **PR35** | Implement minimal `scripts/compile-working-memory.py` (raw chunks → draft `working/*.md`) — ✅ merged (GitHub PR35) |
+| **PR36** | Define supercommands contract (`docs/V1_SUPERCOMMANDS_CONTRACT.md`) — `refresh_memory` and `recover_memory` user-facing wrappers |
+| **PR37** | Implement `scripts/refresh_memory.py` (wrapper: archive + compile in one command) |
+| **PR38** | Implement `scripts/recover_memory.py` (load `working/*.md` and print recovery summary) |
 | **PR6** | Update README.md to describe v1 flow; mark SETUP_WIZARD_FLOW and FULL_ENVIRONMENT_ONBOARDING as `[HEAVY — not v1 path]` |
 | **PR7** | Deferred cleanup — remove REMOVE_LATER test files once source modules formally deprecated |
