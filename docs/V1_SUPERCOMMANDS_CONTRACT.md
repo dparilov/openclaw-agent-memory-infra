@@ -111,8 +111,11 @@ Explicit source, one of:
 | Argument | Description |
 |----------|-------------|
 | `--target` | Path to target project repo root |
-| `--topics` | Comma-separated `<id>:<role>` pairs |
+| `--topic` | Single `<id>:<role>` pair. Primary v1 implementation path. |
+| `--topics` | Optional later extension for comma-separated `<id>:<role>` pairs. |
 | source mode | One of `--input`, `--read-topic`, or later `--session-jsonl` |
+
+> Initial PR38 implementation must start with `--topic` single-topic mode and explicit local `--input`. Multi-topic orchestration and bounded `--read-topic` integration come later.
 
 #### Flags
 
