@@ -200,7 +200,7 @@ class TestContextPacket(unittest.TestCase):
 
     def test_empty_chunks_returns_placeholder(self):
         result = cwm.build_context_packet([])
-        self.assertIn("no chunks", result)
+        self.assertIn("no content available", result)
 
     def test_includes_chunk_header(self):
         _make_chunk(self.target, "7301", 1, "some content")
@@ -231,6 +231,37 @@ class TestContextPacket(unittest.TestCase):
         packet = cwm.build_context_packet(chunks)
         self.assertIn("fact one", packet)
         self.assertIn("fact two", packet)
+
+
+    def test_includes_agent_context(self):
+        chunks = []
+        packet = cwm.build_context_packet(chunks, agent_context="My project context")
+        self.assertIn("AGENT_CONTEXT.md", packet)
+        self.assertIn("My project context", packet)
+
+    def test_includes_notes(self):
+        chunks = []
+        packet = cwm.build_context_packet(chunks, notes="operator note content")
+        self.assertIn("OPERATOR NOTES", packet)
+        self.assertIn("operator note content", packet)
+
+    def test_order_agent_context_then_notes_then_chunks(self):
+        _make_chunk(self.target, "7301", 1, "chunk body")
+        chunks = cwm.scan_chunks(self.target, "7301", "coder")
+        packet = cwm.build_context_packet(
+            chunks, agent_context="ctx content", notes="notes content"
+        )
+        pos_ctx = packet.index("AGENT_CONTEXT")
+        pos_notes = packet.index("OPERATOR NOTES")
+        pos_chunks = packet.index("RAW CHUNKS")
+        self.assertLess(pos_ctx, pos_notes)
+        self.assertLess(pos_notes, pos_chunks)
+
+    def test_missing_agent_context_does_not_crash(self):
+        _make_chunk(self.target, "7301", 1, "chunk body")
+        chunks = cwm.scan_chunks(self.target, "7301", "coder")
+        packet = cwm.build_context_packet(chunks)
+        self.assertIn("chunk body", packet)
 
 
 # ---------------------------------------------------------------------------
@@ -415,6 +446,37 @@ class TestDryRun(unittest.TestCase):
         # No chunks for topic — valid, just warns
         rc = _run(self._args())
         self.assertEqual(rc, 0)
+
+
+    def test_dry_run_output_has_context_packet_markers(self):
+        _make_chunk(self.target, "7301", 1, "some context")
+        import io, contextlib
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            _run(self._args())
+        output = out.getvalue()
+        self.assertIn("=== BEGIN CONTEXT PACKET ===", output)
+        self.assertIn("=== END CONTEXT PACKET ===", output)
+
+    def test_dry_run_output_has_extraction_prompt_markers(self):
+        import io, contextlib
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            _run(self._args())
+        output = out.getvalue()
+        self.assertIn("=== BEGIN EXTRACTION PROMPT ===", output)
+        self.assertIn("=== END EXTRACTION PROMPT ===", output)
+
+    def test_dry_run_packet_bounded(self):
+        """Packet in output must not exceed MAX_CONTEXT_CHARS + reasonable overhead."""
+        _make_chunk(self.target, "7301", 1, "x" * (cwm.MAX_CONTEXT_CHARS + 5000))
+        import io, contextlib
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            _run(self._args())
+        output = out.getvalue()
+        self.assertIn("=== BEGIN CONTEXT PACKET ===", output)
+        self.assertLess(len(output), cwm.MAX_CONTEXT_CHARS * 2 + 10000)
 
 
 # ---------------------------------------------------------------------------

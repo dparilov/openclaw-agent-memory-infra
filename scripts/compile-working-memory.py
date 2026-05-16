@@ -177,35 +177,77 @@ def collect_inputs(
 
 
 def build_context_packet(
-    chunks: list, max_chars: int = MAX_CONTEXT_CHARS
+    chunks: list,
+    agent_context: str = "",
+    notes: str = "",
+    max_chars: int = MAX_CONTEXT_CHARS,
 ) -> str:
-    """Concatenate chunk content up to max_chars with per-chunk headers."""
-    parts: list = []
+    """Build bounded context packet: AGENT_CONTEXT -> OPERATOR NOTES -> RAW CHUNKS.
+
+    Total size is capped at max_chars. No new sources are read here.
+    """
+    buf: list = []
     total = 0
-    for i, info in enumerate(chunks):
-        header = (
-            f"\n\n--- {info.path.name}"
-            f" (topic-{info.topic_id}, {info.role}) ---\n"
-        )
-        try:
-            body = info.path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            body = "[unreadable]"
-        entry = header + body
-        if total + len(entry) > max_chars:
-            remaining = max_chars - total
-            if remaining > len(header) + 40:
-                entry = header + body[: remaining - len(header)]
-                entry += "\n[truncated]"
-                parts.append(entry)
-            omitted = len(chunks) - i
-            parts.append(
-                f"\n\n[context limit reached — {omitted} chunk(s) omitted]"
+
+    def _fits(text: str) -> bool:
+        nonlocal total
+        if total + len(text) > max_chars:
+            return False
+        buf.append(text)
+        total += len(text)
+        return True
+
+    def _add_truncated(text: str) -> None:
+        remaining = max_chars - total
+        if remaining > 40:
+            buf.append(text[:remaining])
+        buf.append("\n[truncated — context limit reached]")
+
+    # Section 1: AGENT_CONTEXT.md
+    if agent_context:
+        section = "=== AGENT_CONTEXT.md ===\n" + agent_context + "\n"
+        if not _fits(section):
+            _add_truncated(section)
+            return "".join(buf)
+
+    # Section 2: Operator notes
+    if notes:
+        section = "\n=== OPERATOR NOTES ===\n" + notes + "\n"
+        if not _fits(section):
+            _add_truncated(section)
+            buf.append("\n[raw chunks omitted — context limit reached]")
+            return "".join(buf)
+
+    # Section 3: Raw chunks
+    if chunks:
+        if not _fits("\n=== RAW CHUNKS ==="):
+            buf.append("\n[raw chunks omitted — context limit reached]")
+            return "".join(buf)
+        for i, info in enumerate(chunks):
+            chunk_header = (
+                f"\n\n--- {info.path.name}"
+                f" (topic-{info.topic_id}, {info.role}) ---\n"
             )
-            break
-        parts.append(entry)
-        total += len(entry)
-    return "".join(parts) if parts else "[no chunks available]"
+            try:
+                body = info.path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                body = "[unreadable]"
+            entry = chunk_header + body
+            if total + len(entry) > max_chars:
+                remaining = max_chars - total
+                if remaining > len(chunk_header) + 40:
+                    buf.append(chunk_header + body[: remaining - len(chunk_header)])
+                    buf.append("\n[truncated]")
+                omitted = len(chunks) - i
+                buf.append(
+                    f"\n\n[context limit reached — {omitted} chunk(s) omitted]"
+                )
+                break
+            buf.append(entry)
+            total += len(entry)
+
+    result = "".join(buf).strip()
+    return result if result else "[no content available]"
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +347,7 @@ compiled_at: "{compiled_at}"
 topics: [{topics}]
 ---
 
-<!-- AGENT: fill in the sections below using the context packet in agent-brief.md -->
+<!-- AGENT: fill in the sections below using the context packet printed by compile-working-memory.py. -->
 
 # Current State
 
@@ -492,14 +534,15 @@ def format_dry_run_report(
         for w in warnings:
             lines.append(f"  \u26a0 {w}")
 
-    preview = context_packet[:500] + ("..." if len(context_packet) > 500 else "")
     lines += [
         "",
-        "Context packet preview (first 500 chars):",
-        preview,
+        "=== BEGIN CONTEXT PACKET ===",
+        context_packet,
+        "=== END CONTEXT PACKET ===",
         "",
-        "Extraction prompt:",
+        "=== BEGIN EXTRACTION PROMPT ===",
         extraction_prompt.strip(),
+        "=== END EXTRACTION PROMPT ===",
         "",
         "(pass --write to write draft working/*.md to disk)",
     ]
@@ -525,14 +568,15 @@ def format_write_report(
         lines += ["", "Warnings:"]
         for w in warnings:
             lines.append(f"  \u26a0 {w}")
-    preview = context_packet[:500] + ("..." if len(context_packet) > 500 else "")
     lines += [
         "",
-        "Context packet (first 500 chars — use with extraction prompt below):",
-        preview,
+        "=== BEGIN CONTEXT PACKET ===",
+        context_packet,
+        "=== END CONTEXT PACKET ===",
         "",
-        "Extraction prompt:",
+        "=== BEGIN EXTRACTION PROMPT ===",
         extraction_prompt.strip(),
+        "=== END EXTRACTION PROMPT ===",
         "",
         "Next step: review working/*.md drafts, then run your agent with the",
         "context packet and extraction prompt above to populate TODO sections.",
@@ -604,7 +648,11 @@ def main(argv: "list[str] | None" = None) -> int:
     inputs = collect_inputs(target, topics, notes_path)
     warnings = collect_warnings(inputs)
     redacted_count = sum(1 for c in inputs.chunks if c.has_redactions)
-    context_packet = build_context_packet(inputs.chunks)
+    context_packet = build_context_packet(
+        chunks=inputs.chunks,
+        agent_context=inputs.agent_context,
+        notes=inputs.notes,
+    )
     extraction_prompt = build_extraction_prompt(
         topics=inputs.topics,
         has_agent_context=bool(inputs.agent_context),
