@@ -56,7 +56,7 @@ Do not conflate the two layers.
 
 - **NEVER** start a session without reading the startup memory load order above
 - **NEVER** ask the user for information already present in `memory/working/*.md`
-- **NEVER** write to `memory/working/*.md` directly — changes go through the extraction + review flow
+- Do not manually edit `memory/working/*.md` during task execution. Update them only through the extraction + review flow.
 - **NEVER** silently accept a contradiction between memory and observed reality —
   report it to the operator and note it for the next memory refresh
 - **IF** working memory files are missing or >24 hours stale → report to operator before proceeding
@@ -73,7 +73,7 @@ python3 read-topic.py <topic-id> --limit 200
 # Bounded by message ID range
 python3 read-topic.py <topic-id> --since-id <id>
 ```
-Full unbounded topic reads are expensive and slow. Never run them silently.
+Full unbounded topic reads may be expensive or slow and must never run silently.
 
 ---
 
