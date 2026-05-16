@@ -259,28 +259,34 @@ _AGENT_BRIEF_TMPL = """\
 ---
 draft: true
 compiled_at: "{compiled_at}"
+target: "{target}"
 topics: [{topics}]
 sources: {source_count} chunk(s)
 ---
 
-<!-- AGENT: fill in the sections below using the context packet at the bottom -->
+<!-- AGENT: the context packet and extraction prompt were printed to stdout   -->
+<!-- during the compile run. Use them to fill in the TODO sections below.    -->
 
 # Agent Brief
 
 ## Project identity
-<!-- TODO: project name, purpose, primary stakeholders -->
+<!-- TODO: project name, purpose, primary stakeholders (from AGENT_CONTEXT.md) -->
 
 ## Repository
-<!-- TODO: repo path, repo URL -->
+{target}
 
 ## Active topics and roles
-<!-- TODO: from AGENT_CONTEXT.md -->
+{topic_list}
 
 ## Current objective
 <!-- TODO -->
 
 ## Do-not-do rules
-<!-- TODO: what this agent must never do -->
+- Do not run `read-topic.py` automatically on startup or on any scheduled trigger
+- Do not use vector DB, embeddings, or OpenClaw memory-core
+- Do not store, reconstruct, or guess secrets from redacted chunks
+- Do not call LLM APIs from scripts
+- Do not auto-commit or auto-push working memory files
 
 ## Memory load order
 1. `.agent/AGENT_CONTEXT.md`
@@ -329,7 +335,8 @@ compiled_at: "{compiled_at}"
 topics: [{topics}]
 ---
 
-<!-- AGENT: fill in the sections below using the context packet in agent-brief.md -->
+<!-- AGENT: the context packet was printed to stdout during the compile run.  -->
+<!-- Use it to fill in the "Issues to extract" section below.               -->
 <!-- Format per issue:
 ## <issue title>
 - severity: high | medium | low
@@ -341,28 +348,11 @@ topics: [{topics}]
 
 # Known Issues
 
-## No issues extracted yet
-- severity: low
-- status: open
-- source: draft template
-- next action: extract from context packet in agent-brief.md
-"""
+## Script-detected warnings
+{warnings_section}
 
-_CONTEXT_PACKET_SECTION = """
----
-
-<!-- CONTEXT PACKET — do not edit below this line                              -->
-<!-- Bounded context from raw chunks for agent-assisted extraction.            -->
-<!-- compile-working-memory.py does not call LLM APIs.                        -->
-<!-- Use the extraction prompt and raw context below to populate working/*.md. -->
-
-## Extraction prompt
-
-{extraction_prompt}
-
-## Raw context
-
-{context_packet}
+## Issues to extract
+<!-- TODO: extract from context packet (printed to stdout during compile) -->
 """
 
 _DRAFT_TEMPLATES = {
@@ -377,25 +367,47 @@ def build_draft(
     compiled_at: str,
     topics: list,
     source_count: int,
-    extraction_prompt: str,
-    context_packet: str,
+    target: str = "",
+    warnings: "list | None" = None,
 ) -> str:
-    """Build draft content for a working memory file."""
+    """Build draft content for a working memory file.
+
+    Context packet is NOT embedded — it is printed to stdout by the caller.
+    Working files contain only the clean scaffold + TODO sections.
+    """
     topics_str = ", ".join(f"{s.topic_id}:{s.role}" for s in topics)
+    topic_list = "\n".join(
+        f"- topic-{s.topic_id} ({s.role})" for s in topics
+    )
     tmpl = _DRAFT_TEMPLATES[filename]
-    header = tmpl.format(
+
+    if filename == "agent-brief.md":
+        return tmpl.format(
+            compiled_at=compiled_at,
+            topics=topics_str,
+            source_count=source_count,
+            target=target or "[target not set]",
+            topic_list=topic_list,
+        )
+
+    if filename == "known-issues.md":
+        ws = warnings or []
+        if ws:
+            warnings_section = "\n".join(f"- {w}" for w in ws)
+        else:
+            warnings_section = "- none detected"
+        return tmpl.format(
+            compiled_at=compiled_at,
+            topics=topics_str,
+            warnings_section=warnings_section,
+        )
+
+    # current-state.md and any future files
+    return tmpl.format(
         compiled_at=compiled_at,
         topics=topics_str,
         source_count=source_count,
     )
-    # Embed context packet only in agent-brief.md to avoid duplication
-    if filename == "agent-brief.md":
-        footer = _CONTEXT_PACKET_SECTION.format(
-            extraction_prompt=extraction_prompt,
-            context_packet=context_packet,
-        )
-        return header + footer
-    return header
 
 
 # ---------------------------------------------------------------------------
@@ -499,6 +511,8 @@ def format_write_report(
     working_dir: Path,
     written: list,
     warnings: list,
+    context_packet: str,
+    extraction_prompt: str,
 ) -> str:
     lines = [
         "=== compile-working-memory write ===",
@@ -511,11 +525,17 @@ def format_write_report(
         lines += ["", "Warnings:"]
         for w in warnings:
             lines.append(f"  \u26a0 {w}")
+    preview = context_packet[:500] + ("..." if len(context_packet) > 500 else "")
     lines += [
         "",
-        "Next step: review the draft files, then run your agent with the",
-        "context packet + extraction prompt in agent-brief.md to populate",
-        "working/*.md.",
+        "Context packet (first 500 chars — use with extraction prompt below):",
+        preview,
+        "",
+        "Extraction prompt:",
+        extraction_prompt.strip(),
+        "",
+        "Next step: review working/*.md drafts, then run your agent with the",
+        "context packet and extraction prompt above to populate TODO sections.",
     ]
     return "\n".join(lines)
 
@@ -613,8 +633,8 @@ def main(argv: "list[str] | None" = None) -> int:
             compiled_at=compiled_at,
             topics=inputs.topics,
             source_count=len(inputs.chunks),
-            extraction_prompt=extraction_prompt,
-            context_packet=context_packet,
+            target=str(target),
+            warnings=warnings,
         )
         out_path = working_dir / fname
         out_path.write_text(draft, encoding="utf-8")
@@ -624,6 +644,8 @@ def main(argv: "list[str] | None" = None) -> int:
         working_dir=working_dir,
         written=written,
         warnings=warnings,
+        context_packet=context_packet,
+        extraction_prompt=extraction_prompt,
     ))
     return 0
 

@@ -294,8 +294,8 @@ class TestDraftTemplates(unittest.TestCase):
             compiled_at="2026-05-16T14:00:00Z",
             topics=[cwm.TopicSpec("7301", "coder")],
             source_count=2,
-            extraction_prompt="extract facts",
-            context_packet="chunk content here",
+            target="/tmp/proj",
+            warnings=["test warning"],
         )
 
     def test_agent_brief_has_required_sections(self):
@@ -304,10 +304,20 @@ class TestDraftTemplates(unittest.TestCase):
                         "Do-not-do rules", "Memory load order", "Next useful actions"]:
             self.assertIn(section, draft)
 
-    def test_agent_brief_contains_context_packet(self):
+    def test_agent_brief_has_target_path(self):
+        draft = cwm.build_draft(
+            filename="agent-brief.md",
+            compiled_at="2026-05-16T14:00:00Z",
+            topics=[cwm.TopicSpec("7301", "coder")],
+            source_count=2,
+            target="/path/to/project",
+        )
+        self.assertIn("/path/to/project", draft)
+
+    def test_agent_brief_no_context_packet_embedded(self):
+        """Context packet stays in stdout only; not embedded in working files."""
         draft = self._draft("agent-brief.md")
-        self.assertIn("chunk content here", draft)
-        self.assertIn("extract facts", draft)
+        self.assertNotIn("chunk content here", draft)
 
     def test_current_state_has_required_sections(self):
         draft = self._draft("current-state.md")
@@ -316,7 +326,7 @@ class TestDraftTemplates(unittest.TestCase):
             self.assertIn(section, draft)
 
     def test_current_state_no_context_packet(self):
-        """Context packet only in agent-brief.md to avoid duplication."""
+        """Context packet goes to stdout only; not in any working file."""
         draft = self._draft("current-state.md")
         self.assertNotIn("chunk content here", draft)
 
@@ -324,6 +334,27 @@ class TestDraftTemplates(unittest.TestCase):
         draft = self._draft("known-issues.md")
         self.assertIn("Known Issues", draft)
         self.assertIn("severity", draft)
+
+    def test_known_issues_includes_script_warnings(self):
+        draft = cwm.build_draft(
+            filename="known-issues.md",
+            compiled_at="2026-05-16T14:00:00Z",
+            topics=[cwm.TopicSpec("7301", "coder")],
+            source_count=0,
+            warnings=["no raw chunks found", "AGENT_CONTEXT.md not found"],
+        )
+        self.assertIn("no raw chunks found", draft)
+        self.assertIn("AGENT_CONTEXT.md not found", draft)
+
+    def test_known_issues_no_warnings_shows_none_detected(self):
+        draft = cwm.build_draft(
+            filename="known-issues.md",
+            compiled_at="2026-05-16T14:00:00Z",
+            topics=[cwm.TopicSpec("7301", "coder")],
+            source_count=0,
+            warnings=[],
+        )
+        self.assertIn("none detected", draft)
 
     def test_draft_frontmatter_present(self):
         for fname in cwm.WORKING_FILES:
@@ -435,11 +466,17 @@ class TestWriteMode(unittest.TestCase):
             self.assertNotIn(forbidden, src,
                              f"forbidden string found in script: {forbidden!r}")
 
-    def test_agent_brief_contains_context_packet_in_write(self):
+    def test_agent_brief_contains_target_path(self):
+        _run(self._args())
+        brief = (self.target / ".agent" / "memory" / "working" / "agent-brief.md").read_text()
+        self.assertIn(str(self.target), brief)
+
+    def test_agent_brief_no_raw_chunk_body(self):
+        """Context packet not embedded in agent-brief.md — stays in stdout only."""
         _make_chunk(self.target, "7301", 1, "my unique fact xyz")
         _run(self._args())
         brief = (self.target / ".agent" / "memory" / "working" / "agent-brief.md").read_text()
-        self.assertIn("my unique fact xyz", brief)
+        self.assertNotIn("my unique fact xyz", brief)
 
     def test_current_state_written(self):
         _run(self._args())
@@ -587,17 +624,16 @@ class TestSensitiveData(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp)
 
-    def test_redacted_placeholder_passes_through_not_raw_secret(self):
-        """[REDACTED:api_key] in chunk is OK to include; raw secret value is not."""
+    def test_redacted_chunk_not_copied_into_working_files(self):
+        """Raw chunk body (including [REDACTED:*] lines) must not appear in working/*.md."""
         _make_chunk(self.target, "7301", 1,
                     "context: api_key=[REDACTED:api_key] used here")
         _run(["--target", str(self.target), "--topics", "7301:coder", "--write"])
-        brief = (self.target / ".agent" / "memory" / "working" / "agent-brief.md").read_text()
-        # The placeholder is acceptable
-        self.assertIn("[REDACTED:api_key]", brief)
-        # Raw secret values must not appear
-        self.assertNotIn("supersecret", brief)
-        self.assertNotIn("sk-abcdef", brief)
+        working_dir = self.target / ".agent" / "memory" / "working"
+        for fname in cwm.WORKING_FILES:
+            text = (working_dir / fname).read_text()
+            # Raw chunk body line must not appear in any working file
+            self.assertNotIn("api_key=[REDACTED:api_key] used here", text)
 
     def test_write_does_not_reconstruct_secrets(self):
         """Chunks with only redacted placeholders — output must not contain raw values."""
