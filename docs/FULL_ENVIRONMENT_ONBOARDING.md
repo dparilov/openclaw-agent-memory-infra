@@ -1,3 +1,8 @@
+> **Legacy/heavy design note.**
+> This document is not the v1 path.
+> The v1 path is file-first:
+> explicit context → refresh-memory → reviewed working/*.md → recover-memory.
+
 # Full Environment Onboarding Checklist
 
 Use this doc when setting up a **brand-new VPS or workstation** to run OpenClaw with agent memory.  

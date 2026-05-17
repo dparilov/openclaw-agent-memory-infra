@@ -1,3 +1,8 @@
+> **Legacy/heavy design note.**
+> This document is not the v1 path.
+> The v1 path is file-first:
+> explicit context → refresh-memory → reviewed working/*.md → recover-memory.
+
 # Automatic Initial Indexing
 
 > **Status: Implemented.**  

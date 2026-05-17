@@ -214,6 +214,7 @@ None. D-1 and D-14 are resolved. D-2 through D-13 are deferred and must not bloc
 | **PR35** | Implement minimal `scripts/compile-working-memory.py` (raw chunks → draft `working/*.md`) — ✅ merged (GitHub PR35) |
 | **PR36** | Define supercommands contract (`docs/V1_SUPERCOMMANDS_CONTRACT.md`) — `refresh_memory` and `recover_memory` user-facing wrappers |
 | **PR37** | Implement `scripts/recover-memory.py` (simplest, read-only, immediately useful) |
-| **PR38** | Implement `scripts/refresh-memory.py` (wraps archive + compile; local input first) |
-| **PR6** | Update README.md to describe v1 flow; mark SETUP_WIZARD_FLOW and FULL_ENVIRONMENT_ONBOARDING as `[HEAVY — not v1 path]` |
-| **PR7** | Deferred cleanup — remove REMOVE_LATER test files once source modules formally deprecated |
+| **PR38** | Implement `scripts/refresh-memory.py` (wraps archive + compile; local input first) — ✅ merged |
+| **PR39** | Docs cleanup — v1 main path in README, legacy doc headers, `docs/V1_QUICKSTART.md`, roadmap update |
+| **PR40** | Explicit bounded read-topic integration for `refresh-memory` (`--read-topic` flag, Pyrogram input) |
+| **PR41** | Agent-assisted fill/review instruction for `working/*.md` (one-prompt usage for new and existing projects) |
