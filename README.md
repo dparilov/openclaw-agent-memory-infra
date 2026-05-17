@@ -63,9 +63,6 @@ and the one-prompt agent usage guide.
 ---
 
 ## Legacy overview (L0–L4 heavy path)
----
-
-## Overview
 
 Agents lose context between sessions. This repo provides the tooling to make
 memory **persistent, structured, and shared** across agents working on the same
