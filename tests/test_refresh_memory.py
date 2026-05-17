@@ -142,12 +142,6 @@ class TestArgParsing(unittest.TestCase):
                               "--input", "/f.md", "--source-type", "markdown_export"])
         self.assertEqual(args.chunk_size, 200)
 
-    def test_max_chars_default(self):
-        p = rm.build_parser()
-        args = p.parse_args(["--target", "/t", "--topic", "7301:coder",
-                              "--input", "/f.md", "--source-type", "markdown_export"])
-        self.assertEqual(args.max_chars, 12000)
-
 
 # ---------------------------------------------------------------------------
 # TestTopicParsing
@@ -561,6 +555,177 @@ class TestStdlibOnly(unittest.TestCase):
         script_text = _SCRIPT.read_text(encoding="utf-8")
         for forbidden in ("anthropic", "openai", "ChatCompletion", "completions.create"):
             self.assertNotIn(forbidden, script_text)
+
+
+# ---------------------------------------------------------------------------
+# TestArgForwarding — verify specific args reach the correct sub-step
+# ---------------------------------------------------------------------------
+
+class TestArgForwarding(unittest.TestCase):
+
+    def _run_mocks(self, **refresh_kwargs):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            inp = _make_input(Path(tmp))
+            arch = _mock_mod(0)
+            comp = _mock_mod(0)
+            rm.refresh(
+                target=target, topic_id="7301", role="coder",
+                input_path=inp, source_type="markdown_export",
+                _archive_mod=arch, _compile_mod=comp,
+                **refresh_kwargs,
+            )
+            return (arch._calls[0] if arch._calls else [],
+                    comp._calls[0] if comp._calls else [])
+
+    def test_chunk_size_forwarded_to_archive(self):
+        arch_argv, _ = self._run_mocks(chunk_size=50)
+        self.assertIn("--chunk-size", arch_argv)
+        idx = arch_argv.index("--chunk-size")
+        self.assertEqual(arch_argv[idx + 1], "50")
+
+    def test_chunk_size_default_forwarded(self):
+        arch_argv, _ = self._run_mocks()
+        self.assertIn("--chunk-size", arch_argv)
+        idx = arch_argv.index("--chunk-size")
+        self.assertEqual(arch_argv[idx + 1], "200")
+
+    def test_source_type_forwarded_to_archive(self):
+        arch_argv, _ = self._run_mocks()
+        self.assertIn("--source-type", arch_argv)
+        idx = arch_argv.index("--source-type")
+        self.assertEqual(arch_argv[idx + 1], "markdown_export")
+
+    def test_target_forwarded_to_archive(self):
+        arch_argv, _ = self._run_mocks()
+        self.assertIn("--target", arch_argv)
+
+    def test_target_forwarded_to_compile(self):
+        _, comp_argv = self._run_mocks()
+        self.assertIn("--target", comp_argv)
+
+    def test_dry_run_not_in_archive_argv(self):
+        """archive-context default is dry-run; no flag needed."""
+        arch_argv, _ = self._run_mocks(write=False)
+        self.assertNotIn("--dry-run", arch_argv)
+
+    def test_dry_run_in_compile_argv(self):
+        _, comp_argv = self._run_mocks(write=False)
+        self.assertIn("--dry-run", comp_argv)
+
+
+# ---------------------------------------------------------------------------
+# TestAdditionalArgParsing
+# ---------------------------------------------------------------------------
+
+class TestAdditionalArgParsing(unittest.TestCase):
+
+    def test_topics_flag_not_accepted(self):
+        """--topics (plural) is NOT a valid flag; only --topic (singular) is."""
+        p = rm.build_parser()
+        with self.assertRaises(SystemExit):
+            p.parse_args([
+                "--target", "/t", "--topics", "7301:coder",
+                "--input", "/f.md", "--source-type", "markdown_export",
+            ])
+
+    def test_chunk_size_accepted(self):
+        p = rm.build_parser()
+        args = p.parse_args([
+            "--target", "/t", "--topic", "7301:coder",
+            "--input", "/f.md", "--source-type", "markdown_export",
+            "--chunk-size", "50",
+        ])
+        self.assertEqual(args.chunk_size, 50)
+
+
+# ---------------------------------------------------------------------------
+# TestIntegration — real archive-context + compile-working-memory scripts
+# ---------------------------------------------------------------------------
+
+class TestIntegration(unittest.TestCase):
+    """End-to-end tests using the real underlying scripts (no mocks).
+
+    These tests verify the actual pipeline works with real temp fixtures.
+    """
+
+    BASE_ARGS = [
+        "--topic", "7301:coder",
+        "--source-type", "markdown_export",
+        "--chunk-size", "1",  # one line per chunk for fast tests
+    ]
+
+    def _make_fixture(self, tmp: Path, num_lines: int = 5):
+        target = _make_target(tmp)
+        inp = tmp / "input.md"
+        inp.write_text(
+            "\n".join(f"Context line {i}" for i in range(num_lines)) + "\n",
+            encoding="utf-8",
+        )
+        return target, inp
+
+    def _base_argv(self, target, inp):
+        return [
+            "--target", str(target),
+            "--input", str(inp),
+        ] + self.BASE_ARGS
+
+    def test_dry_run_writes_nothing_real_scripts(self):
+        """Dry-run with real scripts must not create any files."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target, inp = self._make_fixture(Path(tmp))
+            files_before = set(Path(tmp).rglob("*"))
+            code = rm.main(self._base_argv(target, inp))  # dry-run default
+            files_after = set(Path(tmp).rglob("*"))
+            self.assertEqual(code, 0)
+            self.assertEqual(files_before, files_after)
+
+    def test_write_mode_creates_raw_chunks(self):
+        """Write mode must create at least one raw chunk file."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target, inp = self._make_fixture(Path(tmp))
+            code = rm.main(self._base_argv(target, inp) + ["--write"])
+            self.assertEqual(code, 0)
+            raw_dir = target / ".agent" / "memory" / "raw" / "topic-7301"
+            self.assertTrue(raw_dir.exists(), "raw dir not created")
+            chunks = list(raw_dir.glob("chunk-*.md"))
+            self.assertGreater(len(chunks), 0, "no chunks written")
+
+    def test_write_mode_creates_working_files(self):
+        """Write mode must create the three draft working files."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target, inp = self._make_fixture(Path(tmp))
+            code = rm.main(self._base_argv(target, inp) + ["--write"])
+            self.assertEqual(code, 0)
+            working_dir = target / ".agent" / "memory" / "working"
+            for fname in ("agent-brief.md", "current-state.md", "known-issues.md"):
+                self.assertTrue(
+                    (working_dir / fname).exists(),
+                    f"working file not created: {fname}",
+                )
+
+    def test_overwrite_guard_prevents_second_write(self):
+        """archive-context overwrite guard: second write run must exit 1."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target, inp = self._make_fixture(Path(tmp))
+            argv = self._base_argv(target, inp) + ["--write"]
+            code1 = rm.main(argv)
+            self.assertEqual(code1, 0, "first write should succeed")
+            code2 = rm.main(argv)
+            self.assertEqual(code2, 1, "second write should fail (overwrite guard)")
+
+    def test_write_report_shows_pass_for_both_steps(self):
+        """Write mode report must show PASS for archive and compile."""
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as tmp:
+            target, inp = self._make_fixture(Path(tmp))
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rm.main(self._base_argv(target, inp) + ["--write"])
+            output = buf.getvalue()
+            self.assertIn("Archive step: PASS", output)
+            self.assertIn("Compile step: PASS", output)
 
 
 if __name__ == "__main__":

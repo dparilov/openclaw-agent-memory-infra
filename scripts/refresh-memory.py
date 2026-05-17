@@ -295,10 +295,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Lines per raw chunk (passed to archive-context). Default: 200.",
     )
     p.add_argument(
-        "--max-chars", type=int, default=12000, dest="max_chars",
-        help="Max chars for context packet (reserved for future compile flag). Default: 12000.",
-    )
-    p.add_argument(
         "--write", action="store_true", default=False,
         help="Write files. Default is dry-run.",
     )
