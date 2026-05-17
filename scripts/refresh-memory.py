@@ -472,6 +472,43 @@ def refresh(
     )
 
 
+# ---------------------------------------------------------------------------
+# Telegram message count parser
+# ---------------------------------------------------------------------------
+
+def _parse_message_count(transcript_text: str) -> Optional[int]:
+    """
+    Parse message count from read-topic.py transcript output.
+
+    Tries explicit metadata patterns first:
+      raw format:   '=== Топик ... (N сообщений) ==='
+      batch format: '## Source: telegram:...:... | messages: N'
+
+    Falls back to counting non-empty, non-header lines when neither
+    pattern is found.
+    Returns None if count cannot be determined.
+    """
+    import re as _re
+
+    # Pattern 1: raw format header
+    m = _re.search(r"\((\d+) \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0439\)", transcript_text)
+    if m:
+        return int(m.group(1))
+
+    # Pattern 2: batch format header
+    m = _re.search(r"messages:\s*(\d+)", transcript_text)
+    if m:
+        return int(m.group(1))
+
+    # Fallback: count non-empty, non-header lines
+    lines = transcript_text.splitlines()
+    count = sum(
+        1 for ln in lines
+        if ln.strip() and not ln.startswith("===") and not ln.startswith("##")
+    )
+    return count if count > 0 else None
+
+
 def refresh_telegram(
     target: Path,
     topic_id: str,
@@ -578,7 +615,8 @@ def refresh_telegram(
             raw_dir_path = target / ".agent" / "memory" / "raw" / f"topic-{topic_id}"
             if raw_dir_path.exists():
                 raw_chunk_paths = sorted(raw_dir_path.glob("chunk-*.md"))
-        messages_archived = len(raw_chunk_paths) if raw_chunk_paths else 0
+        # messages_archived = messages processed (same as fetched), not chunk count
+        messages_archived = messages_fetched
 
         # Clean up temp file
         tmp_path.unlink(missing_ok=True)

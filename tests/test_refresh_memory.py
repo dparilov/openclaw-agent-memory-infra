@@ -711,6 +711,89 @@ class TestRefreshTelegram(unittest.TestCase):
         with self.assertRaises(SystemExit):
             p.parse_args(["--target", "/t", "--topic", "7301:coder", "--until", "123"])
 
+    def test_messages_archived_equals_messages_fetched(self):
+        """messages_archived in report must equal messages_fetched, not chunk count."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+
+            # read-topic mock: write transcript with 5 messages (raw format)
+            def fake_read_topic(argv=None):
+                argv = list(argv or [])
+                for i, a in enumerate(argv):
+                    if a == "--out" and i + 1 < len(argv):
+                        Path(argv[i + 1]).write_text(
+                            "=== \u0422\u043e\u043f\u0438\u043a 7301 \u0432 \u0447\u0430\u0442\u0435 -123 (5 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0439) ===\n"
+                            "msg1\nmsg2\nmsg3\nmsg4\nmsg5\n",
+                            encoding="utf-8",
+                        )
+                return 0
+
+            # archive mock: write 1 chunk
+            def fake_archive(argv=None):
+                argv = list(argv or [])
+                t_idx = argv.index("--target") + 1 if "--target" in argv else None
+                tid_idx = argv.index("--topic") + 1 if "--topic" in argv else None
+                if t_idx and tid_idx:
+                    raw_dir = Path(argv[t_idx]) / ".agent" / "memory" / "raw" / f"topic-{argv[tid_idx]}"
+                    raw_dir.mkdir(parents=True, exist_ok=True)
+                    (raw_dir / "chunk-0001.md").write_text("chunk", encoding="utf-8")
+                return 0
+
+            _, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", limit=50, write=True,
+                _read_topic_mod=types.SimpleNamespace(main=fake_read_topic),
+                _archive_mod=types.SimpleNamespace(main=fake_archive),
+                _compile_mod=_mock_mod(0),
+            )
+            self.assertIn("messages fetched: 5", report)
+            self.assertIn("messages archived: 5", report)
+            # raw chunks written should show 1, not 5
+            self.assertIn("raw chunks written: 1", report)
+
+
+# ---------------------------------------------------------------------------
+# TestParseMessageCount
+# ---------------------------------------------------------------------------
+
+class TestParseMessageCount(unittest.TestCase):
+    """Tests for _parse_message_count() helper."""
+
+    def test_raw_format_count_parsed(self):
+        """Raw transcript header '(N сообщений)' is parsed correctly."""
+        text = "=== \u0422\u043e\u043f\u0438\u043a 7301 \u0432 \u0447\u0430\u0442\u0435 -123 (42 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0439) ===\n"
+        self.assertEqual(rm._parse_message_count(text), 42)
+
+    def test_batch_format_count_parsed(self):
+        """Batch transcript header 'messages: N' is parsed correctly."""
+        text = (
+            "## Transcript \u2014 2026-05-17T10:00:00\n"
+            "## Source: telegram:-123:7301 | messages: 17\n"
+        )
+        self.assertEqual(rm._parse_message_count(text), 17)
+
+    def test_fallback_heuristic_when_no_metadata(self):
+        """Fallback line count used when no metadata pattern is present."""
+        text = "line one\nline two\nline three\n"
+        self.assertEqual(rm._parse_message_count(text), 3)
+
+    def test_fallback_excludes_header_lines(self):
+        """Fallback skips lines starting with === or ##."""
+        text = "=== header ===\n## meta\ncontent line\nanother\n"
+        self.assertEqual(rm._parse_message_count(text), 2)
+
+    def test_empty_transcript_returns_none(self):
+        """Empty transcript returns None."""
+        self.assertIsNone(rm._parse_message_count(""))
+
+    def test_raw_format_takes_priority_over_fallback(self):
+        """Raw format header count takes priority over line count."""
+        text = (
+            "=== \u0422\u043e\u043f\u0438\u043a 7301 \u0432 \u0447\u0430\u0442\u0435 -123 (3 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0439) ===\n"
+            "line1\nline2\nline3\nline4\nline5\n"  # 5 non-header lines
+        )
+        self.assertEqual(rm._parse_message_count(text), 3)  # header wins
+
 
 # ---------------------------------------------------------------------------
 # TestDryRunWritesNothing
