@@ -19,7 +19,7 @@ At session start, infer your role:
 
 Always use:
 ```
-/home/dima/projects/openclaw-agent-memory-infra/scripts/
+$PME_REPO/scripts/
 ```
 
 Do not use vendored copies or other paths unless the operator explicitly overrides.
@@ -28,7 +28,7 @@ Do not use vendored copies or other paths unless the operator explicitly overrid
 
 ## 3. Target project location
 
-Default search path: `/home/dima/projects/<project-name>/`
+Default search path: `$PROJECTS_ROOT/<project-name>/`
 
 If not found:
 - **Coder:** propose creating the local project directory and initial scaffold.

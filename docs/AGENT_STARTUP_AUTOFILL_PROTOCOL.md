@@ -32,8 +32,8 @@ SESSION START
   │
   ├─ 1. Infer role (coder / reviewer / infra)
   ├─ 2. Infer Telegram chat and topic from session metadata (if available)
-  ├─ 3. Locate memory extractor at /home/dima/projects/openclaw-agent-memory-infra
-  ├─ 4. Locate target project under /home/dima/projects/<project-name>/
+  ├─ 3. Locate memory extractor at $PME_REPO
+  ├─ 4. Locate target project under $PROJECTS_ROOT/<project-name>/
   │      ├─ NOT FOUND + coder   → propose creation, wait for operator approval
   │      └─ NOT FOUND + reviewer/infra → report blocker, stop
   │
@@ -69,15 +69,15 @@ SESSION START
 
 ```bash
 # Dry-run first (always)
-python3 /home/dima/projects/openclaw-agent-memory-infra/scripts/refresh-memory.py \
-  --target /home/dima/projects/<project-dir> \
+python3 $PME_REPO/scripts/refresh-memory.py \
+  --target $PROJECTS_ROOT/<project-dir> \
   --topic <topic-id>:<role> \
   --input <context-file> \
   --source-type <markdown_export|session_jsonl|operator_note>
 
 # Write only if Archive step: PASS and Compile step: PASS
-python3 /home/dima/projects/openclaw-agent-memory-infra/scripts/refresh-memory.py \
-  --target /home/dima/projects/<project-dir> \
+python3 $PME_REPO/scripts/refresh-memory.py \
+  --target $PROJECTS_ROOT/<project-dir> \
   --topic <topic-id>:<role> \
   --input <context-file> \
   --source-type <markdown_export|session_jsonl|operator_note> \
@@ -86,8 +86,8 @@ python3 /home/dima/projects/openclaw-agent-memory-infra/scripts/refresh-memory.p
 
 Telegram mode (explicit operator request only — never automatic):
 ```bash
-python3 /home/dima/projects/openclaw-agent-memory-infra/scripts/refresh-memory.py \
-  --target /home/dima/projects/<project-dir> \
+python3 $PME_REPO/scripts/refresh-memory.py \
+  --target $PROJECTS_ROOT/<project-dir> \
   --topic <topic-id>:<role> \
   --read-topic \
   --chat-id <chat-id> \
@@ -207,8 +207,8 @@ No raw token values. Name and purpose only.
 ## Step 10 — recover-memory
 
 ```bash
-python3 /home/dima/projects/openclaw-agent-memory-infra/scripts/recover-memory.py \
-  --target /home/dima/projects/<project-dir> \
+python3 $PME_REPO/scripts/recover-memory.py \
+  --target $PROJECTS_ROOT/<project-dir> \
   --topic <topic-id> \
   --role <role>
 ```

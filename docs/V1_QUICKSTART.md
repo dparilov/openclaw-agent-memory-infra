@@ -1,32 +1,36 @@
 # Project Memory Extractor v1 — Quick Start
 
-**Full command reference:** `docs/REFRESH_MEMORY_COMMANDS.md`
-
----
-
-## What is this?
-
-A minimal stdlib-only pipeline to archive topic/session context into Markdown
-chunks and compile a working memory pack that agents load at startup.
-
-No vector DB. No LLM API calls in scripts. No auto-commit. Explicit only.
+**Full command reference:** [docs/REFRESH_MEMORY_COMMANDS.md](REFRESH_MEMORY_COMMANDS.md)
+**Installation:** [docs/INSTALL.md](INSTALL.md)
+**Portability:** [docs/PORTABILITY.md](PORTABILITY.md)
 
 ---
 
 ## Prerequisites
 
-- Python 3.10+ (no pip packages required for local modes)
+- Python 3.10+ (stdlib only — no pip packages for local modes)
 - Target directory with `.agent/AGENT_CONTEXT.md`
-- For Telegram mode: Pyrogram userbot session
+- Pyrogram userbot session for Telegram mode only
+
+---
+
+## Environment variables (optional, set once)
+
+```bash
+export PME_REPO="${PME_REPO:-$HOME/projects/openclaw-agent-memory-infra}"
+export PROJECTS_ROOT="${PROJECTS_ROOT:-$HOME/projects}"
+```
+
+If not set, scripts default to `$HOME/projects/openclaw-agent-memory-infra`.
 
 ---
 
 ## Step 1 — Bootstrap a new target
 
 ```bash
-mkdir -p /path/to/project/.agent/memory/working
+mkdir -p "$PROJECTS_ROOT/<project-dir>/.agent/memory/working"
 
-cat > /path/to/project/.agent/AGENT_CONTEXT.md <<'EOF'
+cat > "$PROJECTS_ROOT/<project-dir>/.agent/AGENT_CONTEXT.md" <<'EOF'
 # Agent Context — My Project
 
 ## Project Overview
@@ -34,7 +38,6 @@ TBD
 
 ## Active Topics
 - topic-7301 — coder role
-- topic-15222 — infra role
 
 ## Agent Behavior Notes
 - Use working Markdown memory at startup.
@@ -49,8 +52,8 @@ EOF
 
 **Local Markdown file:**
 ```bash
-python3 scripts/refresh-memory.py \
-  --target /path/to/project \
+python3 "$PME_REPO/scripts/refresh-memory.py" \
+  --target "$PROJECTS_ROOT/<project-dir>" \
   --topic 7301:coder \
   --input /path/to/context.md \
   --source-type markdown_export \
@@ -59,11 +62,11 @@ python3 scripts/refresh-memory.py \
 
 **Telegram bounded read** (explicit operator request only):
 ```bash
-python3 scripts/refresh-memory.py \
-  --target /path/to/project \
+python3 "$PME_REPO/scripts/refresh-memory.py" \
+  --target "$PROJECTS_ROOT/<project-dir>" \
   --topic 7301:coder \
   --read-topic \
-  --chat-id -1003596522926 \
+  --chat-id <chat-id> \
   --limit 200 \
   --write
 ```
@@ -85,8 +88,8 @@ Review the diff before committing.
 ## Step 4 — Recover at agent startup
 
 ```bash
-python3 scripts/recover-memory.py \
-  --target /path/to/project \
+python3 "$PME_REPO/scripts/recover-memory.py" \
+  --target "$PROJECTS_ROOT/<project-dir>" \
   --topic 7301 \
   --role coder
 ```
@@ -99,8 +102,8 @@ no Telegram, no raw chunks, no vector DB.
 ## One-prompt agent guide
 
 See the **"One-prompt usage guide for agents"** section in
-`docs/REFRESH_MEMORY_COMMANDS.md` for a ready-to-paste prompt covering
-the full dry-run → write → fill → verify cycle.
+[docs/REFRESH_MEMORY_COMMANDS.md](REFRESH_MEMORY_COMMANDS.md) for a
+ready-to-paste prompt covering the full dry-run → write → fill → verify cycle.
 
 ---
 
@@ -119,7 +122,7 @@ the full dry-run → write → fill → verify cycle.
 ## Constraints (always apply)
 
 - Single topic per invocation
-- `--limit` required for Telegram mode (must be a positive integer)
+- `--limit` required for Telegram mode (positive integer)
 - `--read-topic` never runs on startup or heartbeat — explicit only
 - No LLM API calls inside scripts
 - No auto-commit or auto-push

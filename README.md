@@ -76,6 +76,42 @@ L4  Canonical Docs docs/ + .agent/AGENT_CONTEXT.md  Architecture, runbooks, ADR
 
 ---
 
+## PME v1 — Two-Command Workflow (Recommended)
+
+Project Memory Extractor v1 is the current production workflow. Two commands
+cover the full daily cycle:
+
+```bash
+# Daily: fetch Telegram context + update working memory
+python3 "$PME_REPO/scripts/refresh-memory.py" \
+  --project "$PROJECTS_ROOT/my-project" \
+  --read-topic --chat-id -1001234567890 --limit 50
+
+# After a gap: reality-check + restore full context
+python3 "$PME_REPO/scripts/recover-memory.py" \
+  --project "$PROJECTS_ROOT/my-project"
+```
+
+Set two env vars in `~/.bashrc` or `~/.zshrc`:
+
+```bash
+export PME_REPO="$HOME/projects/openclaw-agent-memory-infra"
+export PROJECTS_ROOT="$HOME/projects"
+```
+
+**v1 docs:**
+
+| Doc | Purpose |
+|---|---|
+| [docs/INSTALL.md](docs/INSTALL.md) | Installation walkthrough |
+| [docs/V1_QUICKSTART.md](docs/V1_QUICKSTART.md) | Two-command daily workflow |
+| [docs/PORTABILITY.md](docs/PORTABILITY.md) | Env vars, discovery order, private repo setup |
+| [docs/AGENT_STARTUP_AUTOFILL_PROTOCOL.md](docs/AGENT_STARTUP_AUTOFILL_PROTOCOL.md) | Startup sequence + MEMORY STARTUP REPORT |
+| [docs/PROJECT_START_TEMPLATE.md](docs/PROJECT_START_TEMPLATE.md) | Operator template for new projects |
+| [docs/MEMORY_RULES_TEMPLATE.md](docs/MEMORY_RULES_TEMPLATE.md) | Memory rules (12 sections, copy into MEMORY.md) |
+
+---
+
 ## First Time? Start Here
 
 → **[Setup Wizard Flow](docs/SETUP_WIZARD_FLOW.md)** — starts with **Phase 0 path selection**: Full Environment Cold Start (A), Fast Project Onboarding — repeated onboarding without full re-audit (B), Repair/Resume (C), or Audit Only (D). Then covers environment gates, target project selection, scaffold, config activation, indexing, and agent instruction pack. **Start here.**
