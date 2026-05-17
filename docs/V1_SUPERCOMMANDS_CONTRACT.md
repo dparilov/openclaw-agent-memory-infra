@@ -165,7 +165,7 @@ Explicit source, one of:
 | Argument | Description |
 |----------|-------------|
 | `--target` | Path to target project repo root |
-| `--topics` | Optional; filter output to specific topic/role |
+| `--topic` | Optional; filter output to a specific topic ID |
 
 #### Required behavior
 
