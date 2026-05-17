@@ -728,5 +728,168 @@ class TestIntegration(unittest.TestCase):
             self.assertIn("Compile step: PASS", output)
 
 
+# ---------------------------------------------------------------------------
+# TestInputCounting — unit tests for _count_input()
+# ---------------------------------------------------------------------------
+
+class TestInputCounting(unittest.TestCase):
+
+    def _count(self, content: str, source_type: str = "markdown_export", chunk_size: int = 200):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "input.md"
+            p.write_text(content, encoding="utf-8")
+            return rm._count_input(p, source_type, chunk_size)
+
+    def test_markdown_export_lines_counted(self):
+        lines_read, _, _ = self._count("line1\nline2\nline3\n")
+        self.assertEqual(lines_read, 3)
+
+    def test_markdown_export_logical_records_unknown(self):
+        _, logical, _ = self._count("line1\nline2\n")
+        self.assertIsNone(logical)
+
+    def test_session_jsonl_counts_nonempty_lines(self):
+        content = '{"a":1}\n\n{"b":2}\n{"c":3}\n'
+        _, logical, _ = self._count(content, source_type="session_jsonl")
+        self.assertEqual(logical, 3)  # 3 non-empty JSONL lines
+
+    def test_operator_note_logical_records_unknown(self):
+        _, logical, _ = self._count("note\n", source_type="operator_note")
+        self.assertIsNone(logical)
+
+    def test_planned_chunks_basic(self):
+        content = "\n".join(f"line{i}" for i in range(10)) + "\n"
+        _, _, planned = self._count(content, chunk_size=3)
+        # 10 non-empty lines / 3 = ceil(10/3) = 4
+        self.assertEqual(planned, 4)
+
+    def test_planned_chunks_single_line(self):
+        _, _, planned = self._count("only one line\n", chunk_size=200)
+        self.assertEqual(planned, 1)
+
+    def test_empty_file_returns_zeros(self):
+        lines_read, logical, planned = self._count("", source_type="session_jsonl")
+        self.assertEqual(lines_read, 0)
+        self.assertEqual(logical, 0)
+        self.assertEqual(planned, 0)
+
+
+# ---------------------------------------------------------------------------
+# TestReportFields — new report sections
+# ---------------------------------------------------------------------------
+
+class TestReportFields(unittest.TestCase):
+
+    def _report(self, **kwargs):
+        defaults = dict(
+            mode="dry-run",
+            target=Path("/tmp/proj"),
+            topic_id="7301",
+            role="coder",
+            input_path=Path("/tmp/context.md"),
+            source_type="markdown_export",
+            archive_status="PASS",
+            compile_status="PASS",
+            warnings=[],
+        )
+        defaults.update(kwargs)
+        return rm._build_report(**defaults)
+
+    def test_report_includes_input_processed(self):
+        self.assertIn("Input processed:", self._report())
+
+    def test_report_includes_lines_read(self):
+        r = self._report(lines_read=42)
+        self.assertIn("lines read: 42", r)
+
+    def test_report_includes_logical_records_unknown(self):
+        r = self._report(logical_records=None)
+        self.assertIn("logical records/messages: unknown", r)
+
+    def test_report_includes_logical_records_count(self):
+        r = self._report(logical_records=17)
+        self.assertIn("logical records/messages: 17", r)
+
+    def test_report_includes_planned_chunks_dryrun(self):
+        r = self._report(mode="dry-run", planned_chunks=3)
+        self.assertIn("raw chunks planned: 3", r)
+
+    def test_report_includes_written_chunks_write_mode(self):
+        paths = [Path("/tmp/proj/.agent/memory/raw/topic-7301/chunk-0001.md")]
+        r = self._report(mode="write", raw_chunk_paths=paths)
+        self.assertIn("raw chunks written: 1", r)
+
+    def test_report_includes_files_read(self):
+        self.assertIn("Files read:", self._report())
+
+    def test_report_includes_agent_context_in_files_read(self):
+        r = self._report(target=Path("/tmp/proj"))
+        self.assertIn("AGENT_CONTEXT.md", r)
+
+    def test_report_includes_notes_in_files_read_when_provided(self):
+        r = self._report(notes_path=Path("/tmp/notes.md"))
+        self.assertIn("notes.md", r)
+
+    def test_report_includes_files_written(self):
+        self.assertIn("Files written:", self._report())
+
+    def test_dry_run_files_written_none(self):
+        r = self._report(mode="dry-run")
+        self.assertIn("Files written:\n- none", r)
+
+    def test_write_mode_files_written_lists_chunks(self):
+        paths = [
+            Path("/tmp/proj/.agent/memory/raw/topic-7301/chunk-0001.md"),
+            Path("/tmp/proj/.agent/memory/raw/topic-7301/chunk-0002.md"),
+        ]
+        r = self._report(mode="write", raw_chunk_paths=paths)
+        self.assertIn("chunk-0001.md", r)
+        self.assertIn("chunk-0002.md", r)
+
+    def test_write_mode_files_written_lists_working_files(self):
+        paths = [Path("/tmp/proj/.agent/memory/raw/topic-7301/chunk-0001.md")]
+        r = self._report(mode="write", raw_chunk_paths=paths)
+        self.assertIn("agent-brief.md", r)
+        self.assertIn("current-state.md", r)
+        self.assertIn("known-issues.md", r)
+
+    def test_report_includes_files_not_touched(self):
+        self.assertIn("Files not touched:", self._report())
+
+    def test_files_not_touched_lists_index(self):
+        self.assertIn(".agent/memory/index/", self._report())
+
+    def test_files_not_touched_lists_candidates(self):
+        self.assertIn(".agent/memory/candidates/", self._report())
+
+    def test_files_not_touched_lists_wiki(self):
+        self.assertIn(".agent/memory/wiki/", self._report())
+
+    def test_files_not_touched_lists_git(self):
+        self.assertIn("git staging / commits", self._report())
+
+    def test_session_jsonl_logical_count_in_integrated_report(self):
+        """Integration: _count_input + _build_report for session_jsonl."""
+        with tempfile.TemporaryDirectory() as tmp:
+            inp = Path(tmp) / "msgs.jsonl"
+            inp.write_text('{"a":1}\n\n{"b":2}\n', encoding="utf-8")
+            lines_read, logical, planned = rm._count_input(inp, "session_jsonl", 200)
+            r = rm._build_report(
+                mode="dry-run",
+                target=Path(tmp) / "proj",
+                topic_id="7301",
+                role="coder",
+                input_path=inp,
+                source_type="session_jsonl",
+                archive_status="PASS",
+                compile_status="PASS",
+                warnings=[],
+                lines_read=lines_read,
+                logical_records=logical,
+                planned_chunks=planned,
+            )
+            self.assertIn("logical records/messages: 2", r)  # 2 non-empty JSONL lines
+
+
 if __name__ == "__main__":
     unittest.main()

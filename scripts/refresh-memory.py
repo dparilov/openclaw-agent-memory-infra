@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import math
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -121,6 +122,33 @@ def _validate(
 
 
 # ---------------------------------------------------------------------------
+# Input counting
+# ---------------------------------------------------------------------------
+
+def _count_input(
+    input_path: Path,
+    source_type: str,
+    chunk_size: int,
+) -> Tuple[int, Optional[int], int]:
+    """
+    Count input statistics before archiving.
+    Returns (lines_read, logical_records_or_None, planned_chunks).
+    logical_records is None when not determinable (printed as 'unknown').
+    planned_chunks estimated from non-empty lines / chunk_size.
+    """
+    try:
+        text = input_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 0, None, 0
+    all_lines = text.splitlines()
+    lines_read = len(all_lines)
+    non_empty = [ln for ln in all_lines if ln.strip()]
+    logical_records: Optional[int] = len(non_empty) if source_type == "session_jsonl" else None
+    planned = math.ceil(len(non_empty) / chunk_size) if non_empty else 0
+    return lines_read, logical_records, max(1, planned) if non_empty else 0
+
+
+# ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
 
@@ -134,24 +162,79 @@ def _build_report(
     archive_status: str,
     compile_status: str,
     warnings: List[str],
+    *,
+    lines_read: int = 0,
+    logical_records: Optional[int] = None,
+    planned_chunks: int = 0,
+    notes_path: Optional[Path] = None,
+    raw_chunk_paths: Optional[List[Path]] = None,
 ) -> str:
     raw_dir = f".agent/memory/raw/topic-{topic_id}/"
     warn_lines = "\n".join(f"- {w}" for w in warnings) if warnings else "- none"
     working_lines = "\n".join(
         f"- .agent/memory/working/{f}" for f in WORKING_FILES
     )
+
+    # --- Input processed ---
+    logical_str = str(logical_records) if logical_records is not None else "unknown"
+    chunks_written = len(raw_chunk_paths) if raw_chunk_paths else 0
+    chunk_line = (
+        f"- raw chunks written: {chunks_written}"
+        if mode == "write"
+        else f"- raw chunks planned: {planned_chunks}"
+    )
+    input_section = (
+        "Input processed:\n"
+        f"- input file: {input_path}\n"
+        f"- source type: {source_type}\n"
+        f"- lines read: {lines_read}\n"
+        f"- logical records/messages: {logical_str}\n"
+        f"{chunk_line}"
+    )
+
+    # --- Files read ---
+    files_read: List[str] = [
+        f"- {input_path}",
+        f"- {target / '.agent' / 'AGENT_CONTEXT.md'}",
+    ]
+    if notes_path:
+        files_read.append(f"- {notes_path}")
+    if raw_chunk_paths:
+        for p in raw_chunk_paths:
+            files_read.append(f"- {p}  (compile input)")
+    files_read_section = "Files read:\n" + "\n".join(files_read)
+
+    # --- Files written ---
+    if mode == "write" and raw_chunk_paths:
+        written: List[str] = [f"- {p}" for p in raw_chunk_paths]
+        written += [f"- .agent/memory/working/{f}" for f in WORKING_FILES]
+        files_written_section = "Files written:\n" + "\n".join(written)
+    else:
+        files_written_section = "Files written:\n- none"
+
+    # --- Files not touched ---
+    not_touched_section = (
+        "Files not touched:\n"
+        "- .agent/memory/index/\n"
+        "- .agent/memory/candidates/\n"
+        "- .agent/memory/wiki/\n"
+        "- git staging / commits"
+    )
+
     return (
         "REFRESH MEMORY REPORT\n\n"
         f"Mode: {mode}\n"
         f"Target: {target}\n"
         f"Topic: {topic_id}\n"
-        f"Role: {role}\n"
-        f"Input: {input_path}\n"
-        f"Source type: {source_type}\n\n"
+        f"Role: {role}\n\n"
+        f"{input_section}\n\n"
         f"Archive step: {archive_status}\n"
         f"Compile step: {compile_status}\n\n"
         f"Raw output:\n- {raw_dir}\n\n"
         f"Working files:\n{working_lines}\n\n"
+        f"{files_read_section}\n\n"
+        f"{files_written_section}\n\n"
+        f"{not_touched_section}\n\n"
         f"Warnings:\n{warn_lines}\n\n"
         "Notes:\n"
         "- No Telegram read performed.\n"
@@ -184,6 +267,11 @@ def refresh(
     mode = "write" if write else "dry-run"
     warnings: List[str] = []
 
+    # Count input before running archive
+    lines_read, logical_records, planned_chunks = _count_input(
+        input_path, source_type, chunk_size
+    )
+
     # Load scripts lazily (allow injection in tests)
     if _archive_mod is None:
         try:
@@ -215,10 +303,21 @@ def refresh(
     archive_code = _run_step(_archive_mod, archive_argv, warnings, "archive")
     archive_status = "PASS" if archive_code == 0 else "FAIL"
 
+    # Enumerate written chunks (write mode only, after successful archive)
+    raw_chunk_paths: Optional[List[Path]] = None
+    if archive_code == 0 and write:
+        raw_dir_path = target / ".agent" / "memory" / "raw" / f"topic-{topic_id}"
+        if raw_dir_path.exists():
+            raw_chunk_paths = sorted(raw_dir_path.glob("chunk-*.md"))
+
     if archive_code != 0:
         return 1, _build_report(
             mode, target, topic_id, role, input_path, source_type,
             archive_status, "SKIP", warnings,
+            lines_read=lines_read,
+            logical_records=logical_records,
+            planned_chunks=planned_chunks,
+            notes_path=notes_path,
         )
 
     # -----------------------------------------------------------------------
@@ -242,6 +341,11 @@ def refresh(
     return exit_code, _build_report(
         mode, target, topic_id, role, input_path, source_type,
         archive_status, compile_status, warnings,
+        lines_read=lines_read,
+        logical_records=logical_records,
+        planned_chunks=planned_chunks,
+        notes_path=notes_path,
+        raw_chunk_paths=raw_chunk_paths,
     )
 
 
