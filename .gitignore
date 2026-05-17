@@ -30,3 +30,6 @@ Thumbs.db
 # Keep placeholders
 !.agent/memory/README.md
 !.agent/memory/**/.gitkeep
+
+# Private memory — local-only, never commit
+.agent/memory/private/
