@@ -201,6 +201,36 @@ Explicit source, one of:
 - Read Telegram or raw chunks
 - Call LLM APIs
 
+#### Files read
+
+The report must list:
+
+```
+Files read:
+- .agent/AGENT_CONTEXT.md
+- .agent/memory/working/agent-brief.md
+- .agent/memory/working/current-state.md
+- .agent/memory/working/known-issues.md
+- .agent/memory/working/decisions.md       (if present)
+- .agent/memory/working/open-questions.md  (if present)
+```
+
+#### Files not read
+
+The report must note that the following were not accessed:
+
+```
+Files not read:
+- Telegram
+- .agent/memory/raw/     (raw chunks)
+- .agent/memory/index/
+- .agent/memory/candidates/
+- .agent/memory/wiki/
+- vector DB / memory-core
+```
+
+If `recover-memory` already prints the loaded-files list and notes (e.g. "No Telegram read performed."), that is sufficient for v1. This section makes the expectation explicit for future implementations.
+
 ---
 
 ## Proposed CLI shapes
