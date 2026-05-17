@@ -461,6 +461,34 @@ class TestMainEntrypoint(unittest.TestCase):
             ])
         self.assertNotEqual(cm.exception.code, 0)
 
+    def test_chunk_size_zero_exits_1(self):
+        """--chunk-size 0 must exit 1 with a clear error (no ZeroDivisionError)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            inp = _make_input(Path(tmp))
+            code = rm.main([
+                "--target", str(target),
+                "--topic", "7301:coder",
+                "--input", str(inp),
+                "--source-type", "markdown_export",
+                "--chunk-size", "0",
+            ])
+            self.assertEqual(code, 1)
+
+    def test_chunk_size_negative_exits_1(self):
+        """--chunk-size -1 must exit 1 with a clear error (no traceback)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            inp = _make_input(Path(tmp))
+            code = rm.main([
+                "--target", str(target),
+                "--topic", "7301:coder",
+                "--input", str(inp),
+                "--source-type", "markdown_export",
+                "--chunk-size", "-1",
+            ])
+            self.assertEqual(code, 1)
+
 
 # ---------------------------------------------------------------------------
 # TestDryRunWritesNothing

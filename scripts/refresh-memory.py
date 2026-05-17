@@ -420,6 +420,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     # --dry-run overrides --write
     write = args.write and not args.dry_run
 
+    # --chunk-size must be positive (guard against ZeroDivisionError in _count_input)
+    if args.chunk_size <= 0:
+        print(f"ERROR: --chunk-size must be a positive integer, got {args.chunk_size}")
+        return 1
+
     err = _validate(target, input_path, args.topic, args.source_type)
     if err:
         print(err)
