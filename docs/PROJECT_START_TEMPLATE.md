@@ -28,8 +28,8 @@ Follow `docs/MEMORY_RULES_TEMPLATE.md` exactly.
 
 1. **Infer role** from the current agent/topic context (coder / reviewer / infra).
 2. **Infer Telegram chat and topic** from the current session metadata if available.
-3. **Locate the memory extractor** at `/home/dima/projects/openclaw-agent-memory-infra`.
-4. **Locate the target project** under `/home/dima/projects/` using the project name above.
+3. **Locate the memory extractor** at `$PME_REPO`.
+4. **Locate the target project** under `$PROJECTS_ROOT/` using the project name above.
 5. **If the project does not exist:**
    - Coder role: propose creating the local project directory and initial scaffold.
      Do not create a remote GitHub repository without explicit operator approval.
@@ -46,16 +46,16 @@ Follow `docs/MEMORY_RULES_TEMPLATE.md` exactly.
 
 ```bash
 # Refresh from local context (adjust source-type as needed)
-python3 /home/dima/projects/openclaw-agent-memory-infra/scripts/refresh-memory.py \
-  --target /home/dima/projects/<project-dir> \
+python3 $PME_REPO/scripts/refresh-memory.py \
+  --target $PROJECTS_ROOT/<project-dir> \
   --topic <topic-id>:<role> \
   --input /path/to/context.md \
   --source-type markdown_export \
   --write
 
 # Or: Telegram bounded read (explicit operator request only)
-python3 /home/dima/projects/openclaw-agent-memory-infra/scripts/refresh-memory.py \
-  --target /home/dima/projects/<project-dir> \
+python3 $PME_REPO/scripts/refresh-memory.py \
+  --target $PROJECTS_ROOT/<project-dir> \
   --topic <topic-id>:<role> \
   --read-topic \
   --chat-id <chat-id> \
@@ -63,8 +63,8 @@ python3 /home/dima/projects/openclaw-agent-memory-infra/scripts/refresh-memory.p
   --write
 
 # Recover
-python3 /home/dima/projects/openclaw-agent-memory-infra/scripts/recover-memory.py \
-  --target /home/dima/projects/<project-dir> \
+python3 $PME_REPO/scripts/recover-memory.py \
+  --target $PROJECTS_ROOT/<project-dir> \
   --topic <topic-id> \
   --role <role>
 ```

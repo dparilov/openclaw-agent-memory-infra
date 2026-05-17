@@ -6,6 +6,20 @@ compact facts across sessions — without losing context between handoffs.
 
 ---
 
+## Install
+
+```bash
+git clone <PME_GIT_URL> "$HOME/projects/openclaw-agent-memory-infra"
+export PME_REPO="$HOME/projects/openclaw-agent-memory-infra"
+export PROJECTS_ROOT="$HOME/projects"
+```
+
+Add the two `export` lines to `~/.bashrc` or `~/.zshrc`.  No pip installs
+required for local mode.  See [docs/INSTALL.md](docs/INSTALL.md) for full
+prerequisites and Telegram setup.
+
+---
+
 ## v1 — Project Memory Extractor (current active path)
 
 The current implemented path is the **Project Memory Extractor v1** — a simple,
@@ -76,17 +90,58 @@ L4  Canonical Docs docs/ + .agent/AGENT_CONTEXT.md  Architecture, runbooks, ADR
 
 ---
 
+## PME v1 — Two-Command Workflow (Recommended)
+
+Project Memory Extractor v1 is the current production workflow. Two commands
+cover the full daily cycle:
+
+```bash
+# Refresh from Telegram bounded read
+python3 "$PME_REPO/scripts/refresh-memory.py" \
+  --target "$PROJECTS_ROOT/my-project" \
+  --topic 7301:coder \
+  --read-topic \
+  --chat-id <chat-id> \
+  --limit 200 \
+  --write
+
+# Recover startup context
+python3 "$PME_REPO/scripts/recover-memory.py" \
+  --target "$PROJECTS_ROOT/my-project" \
+  --topic 7301 \
+  --role coder
+```
+
+Set two env vars in `~/.bashrc` or `~/.zshrc`:
+
+```bash
+export PME_REPO="$HOME/projects/openclaw-agent-memory-infra"
+export PROJECTS_ROOT="$HOME/projects"
+```
+
+**v1 docs:**
+
+| Doc | Purpose |
+|---|---|
+| [docs/INSTALL.md](docs/INSTALL.md) | Installation walkthrough |
+| [docs/V1_QUICKSTART.md](docs/V1_QUICKSTART.md) | Two-command daily workflow |
+| [docs/PORTABILITY.md](docs/PORTABILITY.md) | Env vars, discovery order, private repo setup |
+| [docs/AGENT_STARTUP_AUTOFILL_PROTOCOL.md](docs/AGENT_STARTUP_AUTOFILL_PROTOCOL.md) | Startup sequence + MEMORY STARTUP REPORT |
+| [docs/PROJECT_START_TEMPLATE.md](docs/PROJECT_START_TEMPLATE.md) | Operator template for new projects |
+| [docs/MEMORY_RULES_TEMPLATE.md](docs/MEMORY_RULES_TEMPLATE.md) | Memory rules (12 sections, copy into MEMORY.md) |
+
+---
+
 ## First Time? Start Here
 
-→ **[Setup Wizard Flow](docs/SETUP_WIZARD_FLOW.md)** — starts with **Phase 0 path selection**: Full Environment Cold Start (A), Fast Project Onboarding — repeated onboarding without full re-audit (B), Repair/Resume (C), or Audit Only (D). Then covers environment gates, target project selection, scaffold, config activation, indexing, and agent instruction pack. **Start here.**
-→ **[Full Environment Onboarding](docs/FULL_ENVIRONMENT_ONBOARDING.md)** — detailed gate reference (A–K) used by the wizard for environment checks.
-→ **[Bootstrap Prerequisites](docs/BOOTSTRAP_PREREQUISITES.md)** — concise prerequisites-only checklist if your environment is already set up.
-→ **[Final Agent Instruction Pack](docs/FINAL_AGENT_INSTRUCTION_PACK.md)** — ready-to-send prompts for infra/coder/reviewer agents (produced by wizard Phase 8).
-→ **[OAuth Gate Cards](docs/OAUTH_GATE_CARDS.md)** — deterministic remediation cards for auth failures: Codex headless OAuth, VPS browser login SSH tunnel, device-pairing stale endpoint, OpenClaw 2026.5 config migration.
-→ **[Cold Test Findings 2026-05-04](docs/COLD_TEST_FINDINGS_2026-05-04.md)** — 8 findings from the first live Phase 1 cold run: Phase 1 target-project-agnostic rule, Fast Preflight, OAuth human-operated gates, security ACK scoping.
+For the current v1 path, start with:
 
-All documents can be used with any external assistant (ChatGPT, Claude web, etc.) to walk
-through setup step by step and produce an explicit READY / NOT READY verdict.
+- [docs/INSTALL.md](docs/INSTALL.md)
+- [docs/V1_QUICKSTART.md](docs/V1_QUICKSTART.md)
+- [docs/PROJECT_START_TEMPLATE.md](docs/PROJECT_START_TEMPLATE.md)
+- [docs/MEMORY_RULES_TEMPLATE.md](docs/MEMORY_RULES_TEMPLATE.md)
+
+Legacy setup docs remain in `docs/` for historical reference but are not the v1 path.
 
 ---
 
