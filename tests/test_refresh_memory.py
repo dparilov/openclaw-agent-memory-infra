@@ -84,17 +84,19 @@ class TestArgParsing(unittest.TestCase):
             p.parse_args(["--target", "/t", "--input", "/f.md",
                           "--source-type", "markdown_export"])
 
-    def test_input_required(self):
+    def test_input_optional_at_parser_level(self):
+        # --input is optional at parser level; main() validates mode exclusivity
         p = rm.build_parser()
-        with self.assertRaises(SystemExit):
-            p.parse_args(["--target", "/t", "--topic", "7301:coder",
-                          "--source-type", "markdown_export"])
+        args = p.parse_args(["--target", "/t", "--topic", "7301:coder",
+                              "--source-type", "markdown_export"])
+        self.assertIsNone(args.input_path)
 
-    def test_source_type_required(self):
+    def test_source_type_optional_at_parser_level(self):
+        # --source-type is optional at parser level; main() validates for local mode
         p = rm.build_parser()
-        with self.assertRaises(SystemExit):
-            p.parse_args(["--target", "/t", "--topic", "7301:coder",
-                          "--input", "/f.md"])
+        args = p.parse_args(["--target", "/t", "--topic", "7301:coder",
+                              "--input", "/f.md"])
+        self.assertIsNone(args.source_type)
 
     def test_source_type_choices(self):
         p = rm.build_parser()
@@ -488,6 +490,309 @@ class TestMainEntrypoint(unittest.TestCase):
                 "--chunk-size", "-1",
             ])
             self.assertEqual(code, 1)
+
+    def test_no_source_mode_exits_1(self):
+        """Neither --input nor --read-topic -> exit 1."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            code = rm.main([
+                "--target", str(target),
+                "--topic", "7301:coder",
+            ])
+            self.assertEqual(code, 1)
+
+    def test_input_and_read_topic_mutually_exclusive(self):
+        """--input + --read-topic together -> exit 1."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            inp = _make_input(Path(tmp))
+            code = rm.main([
+                "--target", str(target),
+                "--topic", "7301:coder",
+                "--input", str(inp),
+                "--source-type", "markdown_export",
+                "--read-topic",
+                "--chat-id", "-123",
+                "--limit", "100",
+            ])
+            self.assertEqual(code, 1)
+
+    def test_read_topic_requires_chat_id(self):
+        """--read-topic without --chat-id -> exit 1."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            code = rm.main([
+                "--target", str(target),
+                "--topic", "7301:coder",
+                "--read-topic",
+                "--limit", "100",
+            ])
+            self.assertEqual(code, 1)
+
+    def test_read_topic_requires_limit(self):
+        """--read-topic without --limit -> exit 1."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            code = rm.main([
+                "--target", str(target),
+                "--topic", "7301:coder",
+                "--read-topic",
+                "--chat-id", "-123",
+            ])
+            self.assertEqual(code, 1)
+
+    def test_read_topic_limit_zero_exits_1(self):
+        """--read-topic --limit 0 -> exit 1."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            code = rm.main([
+                "--target", str(target),
+                "--topic", "7301:coder",
+                "--read-topic",
+                "--chat-id", "-123",
+                "--limit", "0",
+            ])
+            self.assertEqual(code, 1)
+
+    def test_read_topic_limit_negative_exits_1(self):
+        """--read-topic --limit -1 -> exit 1."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            code = rm.main([
+                "--target", str(target),
+                "--topic", "7301:coder",
+                "--read-topic",
+                "--chat-id", "-123",
+                "--limit", "-1",
+            ])
+            self.assertEqual(code, 1)
+
+
+# ---------------------------------------------------------------------------
+# TestRefreshTelegram
+# ---------------------------------------------------------------------------
+
+class TestRefreshTelegram(unittest.TestCase):
+    """Tests for refresh_telegram() — Telegram read path."""
+
+    def _make_read_topic_mock(self, code: int = 0):
+        """Mock read-topic module that writes to --out if present."""
+        def fake_main(argv=None):
+            argv = list(argv or [])
+            for i, a in enumerate(argv):
+                if a == "--out" and i + 1 < len(argv):
+                    Path(argv[i + 1]).write_text("mock transcript line\n", encoding="utf-8")
+            return code
+        return types.SimpleNamespace(main=fake_main)
+
+    def test_dry_run_writes_no_files(self):
+        """Telegram dry-run returns 0 and writes nothing to target."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            code, _ = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-1001234567890", limit=100, write=False,
+            )
+            self.assertEqual(code, 0)
+            mem_dir = target / ".agent" / "memory"
+            self.assertFalse(mem_dir.exists())
+
+    def test_dry_run_report_contains_telegram_read(self):
+        """Dry-run report contains 'Telegram read:' section."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            _, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-1001234567890", limit=100, write=False,
+            )
+            self.assertIn("Telegram read:", report)
+            self.assertIn("chat id: -1001234567890", report)
+            self.assertIn("limit: 100", report)
+
+    def test_dry_run_report_files_written_none(self):
+        """Dry-run report says Files written: none."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            _, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", limit=50, write=False,
+            )
+            self.assertIn("Files written:\n- none", report)
+
+    def test_write_calls_read_topic_archive_compile(self):
+        """Write mode calls read-topic, archive, compile in sequence."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            call_log = []
+
+            def make_mock(label, code=0):
+                def fake_main(argv=None):
+                    argv = list(argv or [])
+                    call_log.append(label)
+                    for i, a in enumerate(argv):
+                        if a == "--out" and i + 1 < len(argv):
+                            Path(argv[i + 1]).write_text("msg\n", encoding="utf-8")
+                    return code
+                return types.SimpleNamespace(main=fake_main)
+
+            rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", limit=50, write=True,
+                _read_topic_mod=make_mock("read-topic"),
+                _archive_mod=make_mock("archive"),
+                _compile_mod=make_mock("compile"),
+            )
+            self.assertIn("read-topic", call_log)
+            self.assertIn("archive", call_log)
+            self.assertIn("compile", call_log)
+
+    def test_write_report_contains_telegram_read(self):
+        """Write mode report contains Telegram read section with message fields."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            _, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", limit=50, write=True,
+                _read_topic_mod=self._make_read_topic_mock(),
+                _archive_mod=_mock_mod(0),
+                _compile_mod=_mock_mod(0),
+            )
+            self.assertIn("Telegram read:", report)
+            self.assertIn("messages fetched:", report)
+            self.assertIn("messages archived:", report)
+
+    def test_write_report_contains_files_read(self):
+        """Write mode report contains Files read: section."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            _, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", limit=50, write=True,
+                _read_topic_mod=self._make_read_topic_mock(),
+                _archive_mod=_mock_mod(0),
+                _compile_mod=_mock_mod(0),
+            )
+            self.assertIn("Files read:", report)
+
+    def test_write_report_contains_files_not_touched(self):
+        """Write mode report contains Files not touched: section."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            _, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", limit=50, write=True,
+                _read_topic_mod=self._make_read_topic_mock(),
+                _archive_mod=_mock_mod(0),
+                _compile_mod=_mock_mod(0),
+            )
+            self.assertIn("Files not touched:", report)
+
+    def test_no_topics_flag(self):
+        """No --topics flag exists in refresh-memory CLI."""
+        p = rm.build_parser()
+        with self.assertRaises(SystemExit):
+            p.parse_args(["--target", "/t", "--topic", "7301:coder", "--topics", "7301:coder"])
+
+    def test_no_full_flag(self):
+        """No --full flag exists in refresh-memory CLI."""
+        p = rm.build_parser()
+        with self.assertRaises(SystemExit):
+            p.parse_args(["--target", "/t", "--topic", "7301:coder", "--full"])
+
+    def test_no_since_flag(self):
+        """No --since flag exists in refresh-memory CLI."""
+        p = rm.build_parser()
+        with self.assertRaises(SystemExit):
+            p.parse_args(["--target", "/t", "--topic", "7301:coder", "--since", "123"])
+
+    def test_no_until_flag(self):
+        """No --until flag exists in refresh-memory CLI."""
+        p = rm.build_parser()
+        with self.assertRaises(SystemExit):
+            p.parse_args(["--target", "/t", "--topic", "7301:coder", "--until", "123"])
+
+    def test_messages_archived_equals_messages_fetched(self):
+        """messages_archived in report must equal messages_fetched, not chunk count."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+
+            # read-topic mock: write transcript with 5 messages (raw format)
+            def fake_read_topic(argv=None):
+                argv = list(argv or [])
+                for i, a in enumerate(argv):
+                    if a == "--out" and i + 1 < len(argv):
+                        Path(argv[i + 1]).write_text(
+                            "=== \u0422\u043e\u043f\u0438\u043a 7301 \u0432 \u0447\u0430\u0442\u0435 -123 (5 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0439) ===\n"
+                            "msg1\nmsg2\nmsg3\nmsg4\nmsg5\n",
+                            encoding="utf-8",
+                        )
+                return 0
+
+            # archive mock: write 1 chunk
+            def fake_archive(argv=None):
+                argv = list(argv or [])
+                t_idx = argv.index("--target") + 1 if "--target" in argv else None
+                tid_idx = argv.index("--topic") + 1 if "--topic" in argv else None
+                if t_idx and tid_idx:
+                    raw_dir = Path(argv[t_idx]) / ".agent" / "memory" / "raw" / f"topic-{argv[tid_idx]}"
+                    raw_dir.mkdir(parents=True, exist_ok=True)
+                    (raw_dir / "chunk-0001.md").write_text("chunk", encoding="utf-8")
+                return 0
+
+            _, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", limit=50, write=True,
+                _read_topic_mod=types.SimpleNamespace(main=fake_read_topic),
+                _archive_mod=types.SimpleNamespace(main=fake_archive),
+                _compile_mod=_mock_mod(0),
+            )
+            self.assertIn("messages fetched: 5", report)
+            self.assertIn("messages archived: 5", report)
+            # raw chunks written should show 1, not 5
+            self.assertIn("raw chunks written: 1", report)
+
+
+# ---------------------------------------------------------------------------
+# TestParseMessageCount
+# ---------------------------------------------------------------------------
+
+class TestParseMessageCount(unittest.TestCase):
+    """Tests for _parse_message_count() helper."""
+
+    def test_raw_format_count_parsed(self):
+        """Raw transcript header '(N сообщений)' is parsed correctly."""
+        text = "=== \u0422\u043e\u043f\u0438\u043a 7301 \u0432 \u0447\u0430\u0442\u0435 -123 (42 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0439) ===\n"
+        self.assertEqual(rm._parse_message_count(text), 42)
+
+    def test_batch_format_count_parsed(self):
+        """Batch transcript header 'messages: N' is parsed correctly."""
+        text = (
+            "## Transcript \u2014 2026-05-17T10:00:00\n"
+            "## Source: telegram:-123:7301 | messages: 17\n"
+        )
+        self.assertEqual(rm._parse_message_count(text), 17)
+
+    def test_fallback_heuristic_when_no_metadata(self):
+        """Fallback line count used when no metadata pattern is present."""
+        text = "line one\nline two\nline three\n"
+        self.assertEqual(rm._parse_message_count(text), 3)
+
+    def test_fallback_excludes_header_lines(self):
+        """Fallback skips lines starting with === or ##."""
+        text = "=== header ===\n## meta\ncontent line\nanother\n"
+        self.assertEqual(rm._parse_message_count(text), 2)
+
+    def test_empty_transcript_returns_none(self):
+        """Empty transcript returns None."""
+        self.assertIsNone(rm._parse_message_count(""))
+
+    def test_raw_format_takes_priority_over_fallback(self):
+        """Raw format header count takes priority over line count."""
+        text = (
+            "=== \u0422\u043e\u043f\u0438\u043a 7301 \u0432 \u0447\u0430\u0442\u0435 -123 (3 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0439) ===\n"
+            "line1\nline2\nline3\nline4\nline5\n"  # 5 non-header lines
+        )
+        self.assertEqual(rm._parse_message_count(text), 3)  # header wins
 
 
 # ---------------------------------------------------------------------------

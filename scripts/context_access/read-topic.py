@@ -459,36 +459,40 @@ async def fetch_messages(
 # Output formatters
 # ---------------------------------------------------------------------------
 
-def print_raw(messages: list, chat_id: int, topic_id: int) -> None:
-    print(f"=== Топик {topic_id} в чате {chat_id} ({len(messages)} сообщений) ===\n")
+def print_raw(messages: list, chat_id: int, topic_id: int, *, file=None) -> None:
+    if file is None:
+        file = sys.stdout
+    print(f"=== Топик {topic_id} в чате {chat_id} ({len(messages)} сообщений) ===\n", file=file)
     for date, mid, sender, text in messages:
         preview = text[:500].replace("\n", " ")
-        print(f"[{date.strftime('%d.%m %H:%M')}] {sender}: {preview}")
-    print("\n=== END ===")
+        print(f"[{date.strftime('%d.%m %H:%M')}] {sender}: {preview}", file=file)
+    print("\n=== END ===", file=file)
     if messages:
         last_id = messages[-1][1]
         print(f"\n# last-message-id: {last_id}", file=sys.stderr)
 
 
-def print_batch_format(messages: list, chat_id: int, topic_id: int) -> None:
+def print_batch_format(messages: list, chat_id: int, topic_id: int, *, file=None) -> None:
     """Output structured transcript block for downstream piping into archive-batch-v2.py."""
+    if file is None:
+        file = sys.stdout
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-    print(f"## Transcript — {now}")
-    print(f"## Source: telegram:{chat_id}:{topic_id} | messages: {len(messages)}")
+    print(f"## Transcript — {now}", file=file)
+    print(f"## Source: telegram:{chat_id}:{topic_id} | messages: {len(messages)}", file=file)
     if messages:
         first_ts = messages[0][0].strftime("%Y-%m-%dT%H:%M:%S")
         last_ts = messages[-1][0].strftime("%Y-%m-%dT%H:%M:%S")
         last_id = messages[-1][1]
-        print(f"## Range: {first_ts} → {last_ts} | last-id: {last_id}")
-    print()
+        print(f"## Range: {first_ts} → {last_ts} | last-id: {last_id}", file=file)
+    print(file=file)
     for date, mid, sender, text in messages:
         ts = date.strftime("%Y-%m-%dT%H:%M")
         lines = text.strip().split("\n")
         for i, line in enumerate(lines):
             prefix = f"[{ts}] {sender}: " if i == 0 else " " * (len(ts) + len(sender) + 4)
-            print(prefix + line)
-    print()
-    print("## END TRANSCRIPT")
+            print(prefix + line, file=file)
+    print(file=file)
+    print("## END TRANSCRIPT", file=file)
     if messages:
         print("# Pipe this output to fact-extraction, then: archive-batch-v2.py <topic> --write", file=sys.stderr)
         print(f"# last-message-id: {messages[-1][1]}", file=sys.stderr)
@@ -498,7 +502,7 @@ def print_batch_format(messages: list, chat_id: int, topic_id: int) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Read Telegram topic history via Pyrogram userbot"
     )
@@ -527,7 +531,9 @@ def main():
     parser.add_argument("--session-file", default=None,
                         help="Path to Pyrogram .session file. "
                              "Overrides PYROGRAM_SESSION env var and config.")
-    args = parser.parse_args()
+    parser.add_argument("--out", default=None,
+                        help="Write transcript output to this file instead of stdout.")
+    args = parser.parse_args(argv)
 
     # Load config first (used as fallback in all resolver functions)
     cfg = load_agent_config(config_path=args.config)
@@ -609,10 +615,17 @@ def main():
             clear_checkpoint(topic_id_str, cp_dir)
 
     # 7. output
-    if args.batch_format:
-        print_batch_format(output_msgs, chat_id_int, topic_id_int)
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as _out_f:
+            if args.batch_format:
+                print_batch_format(output_msgs, chat_id_int, topic_id_int, file=_out_f)
+            else:
+                print_raw(output_msgs, chat_id_int, topic_id_int, file=_out_f)
     else:
-        print_raw(output_msgs, chat_id_int, topic_id_int)
+        if args.batch_format:
+            print_batch_format(output_msgs, chat_id_int, topic_id_int)
+        else:
+            print_raw(output_msgs, chat_id_int, topic_id_int)
 
 
 if __name__ == "__main__":
