@@ -117,72 +117,26 @@ Private memory lives at:
   credentials.md     Token names, purposes, env file locations
   infrastructure.md  Service ports, admin URLs, deployment/restart commands
 ```
-
-**Allowed content:**
-- VPS IPs / hostnames
-- SSH usernames and command patterns
-- Where keys and configs are located (path only, not key content)
-- Env file locations (path only, not contents)
-- Service ports and admin URLs
-- Token names and their purpose (not values)
-- Deployment and restart commands
-- Recovery procedures
-
-**Forbidden content:**
-- Raw secret values (passwords, tokens, private keys, API keys)
-- GitHub tokens, Telegram bot tokens, OAuth secrets
-
-**Rules:**
-- Never commit `.agent/memory/private/` — it must be in `.gitignore`
-- Never copy private memory content into `working/*.md`, `README`, docs, PR descriptions, or commit messages
-- When reporting on private memory updates, summarize category-level changes only: e.g. "updated SSH access pattern for VPS-1" — not the actual values
-- If a chunk contains `[REDACTED:<category>]`, note the category in private memory without reconstructing the value
-
----
-
-## 9. What agents must NOT do
-
-- Do not run `read-topic` automatically on startup or heartbeat
-- Do not use vector DB, embeddings, or OpenClaw memory-core
-- Do not call LLM APIs from scripts
-- Do not auto-commit or auto-push working or private memory
-- Do not add candidate promotion, wiki build, or multi-topic orchestration
-- Do not create GitHub repos without operator approval
-- Do not touch target project repos beyond `.agent/memory/`
-- Do not leave `<!-- TODO -->` placeholders after a refresh cycle
-
----
-
-## 10. MEMORY STARTUP REPORT format
-
-After completing the startup sequence, return exactly this report:
-
-```
 MEMORY STARTUP REPORT
 
-Role:          <coder|reviewer|infra>
-Topic:         <topic-id>
-Project:       <project-name>
-Target path:   <absolute path>
+Project:                  <project-name>
+Project path:             <absolute path>
+Role:                     <coder|reviewer|infra>
+Topic:                    <topic-id>
+Repository:               <git remote URL or local path>
+AGENT_CONTEXT:            OK | MISSING | CREATED
 
-Memory status:
-  AGENT_CONTEXT.md:    OK | MISSING | CREATED
-  agent-brief.md:      OK | MISSING | STALE | REFRESHED
-  current-state.md:    OK | MISSING | STALE | REFRESHED
-  known-issues.md:     OK | MISSING | STALE | REFRESHED
-  decisions.md:        OK | MISSING | optional
-  open-questions.md:   OK | MISSING | optional
+Refresh:                  SKIPPED | PASS | FAIL
+Telegram messages fetched: <N> | N/A
+Telegram messages archived: <N> | N/A
+Raw chunks written:        <N> | N/A
+Working memory updated:    SKIPPED | DONE | PARTIAL (<what was not filled>)
+Private memory updated:    SKIPPED | UPDATED (categories: <access|credentials|infrastructure>)
+Recover-memory:            PASS | FAIL
 
-Refresh:       SKIPPED | PASS | FAIL
-Autofill:      SKIPPED | DONE | PARTIAL (list what was not filled)
-Private memory: SKIPPED | UPDATED (categories: access | credentials | infrastructure)
-Recover:       PASS | FAIL
-
-Current objective:   <one line from agent-brief.md>
-Active blockers:     <count> — <severity of highest>
-Next useful actions: <1-3 bullets from agent-brief.md>
-
-Warnings:      <list or none>
+Ready to work:             YES | NO
+Warnings:                  <list or none>
+Blockers:                  <list or none>
 ```
 
 ---

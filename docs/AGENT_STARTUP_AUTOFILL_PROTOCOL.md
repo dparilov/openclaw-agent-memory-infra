@@ -212,45 +212,26 @@ python3 /home/dima/projects/openclaw-agent-memory-infra/scripts/recover-memory.p
   --topic <topic-id> \
   --role <role>
 ```
-
-Reads only: `AGENT_CONTEXT.md` + `working/*.md`
-Does not read: Telegram, raw chunks, index, candidates, wiki, vector DB
-
----
-
-## Step 11 — MEMORY STARTUP REPORT
-
-Return this report after every startup sequence:
-
-```
 MEMORY STARTUP REPORT
 
-Role:          <coder|reviewer|infra>
-Topic:         <topic-id>
-Project:       <project-name>
-Target path:   <absolute path>
+Project:                  <project-name>
+Project path:             <absolute path>
+Role:                     <coder|reviewer|infra>
+Topic:                    <topic-id>
+Repository:               <git remote URL or local path>
+AGENT_CONTEXT:            OK | MISSING | CREATED
 
-Memory status:
-  AGENT_CONTEXT.md:    OK | MISSING | CREATED
-  agent-brief.md:      OK | MISSING | STALE | REFRESHED
-  current-state.md:    OK | MISSING | STALE | REFRESHED
-  known-issues.md:     OK | MISSING | STALE | REFRESHED
-  decisions.md:        OK | MISSING | optional
-  open-questions.md:   OK | MISSING | optional
+Refresh:                  SKIPPED | PASS | FAIL
+Telegram messages fetched: <N> | N/A
+Telegram messages archived: <N> | N/A
+Raw chunks written:        <N> | N/A
+Working memory updated:    SKIPPED | DONE | PARTIAL (<what was not filled>)
+Private memory updated:    SKIPPED | UPDATED (categories: <access|credentials|infrastructure>)
+Recover-memory:            PASS | FAIL
 
-Refresh:        SKIPPED | PASS | FAIL
-Autofill:       SKIPPED | DONE | PARTIAL (<what was not filled>)
-Private memory: SKIPPED | UPDATED (categories: <access|credentials|infrastructure>)
-Recover:        PASS | FAIL
-
-Current objective:   <one line from agent-brief.md>
-Active blockers:     <N> — <severity of highest: low|medium|high|critical>
-Next useful actions:
-  - <action 1>
-  - <action 2>
-  - <action 3>
-
-Warnings: <list or none>
+Ready to work:             YES | NO
+Warnings:                  <list or none>
+Blockers:                  <list or none>
 ```
 
 ---
