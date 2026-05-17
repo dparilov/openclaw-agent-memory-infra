@@ -217,3 +217,14 @@ None. D-1 and D-14 are resolved. D-2 through D-13 are deferred and must not bloc
 | **PR38** | Implement `scripts/refresh-memory.py` (wraps archive + compile; local input first) |
 | **PR6** | Update README.md to describe v1 flow; mark SETUP_WIZARD_FLOW and FULL_ENVIRONMENT_ONBOARDING as `[HEAVY — not v1 path]` |
 | **PR7** | Deferred cleanup — remove REMOVE_LATER test files once source modules formally deprecated |
+
+---
+
+## PR status updates (2026-05-17)
+
+| PR | Status |
+|----|--------|
+| **PR40** | messages_archived fix + _parse_message_count() — ✅ merged |
+| **PR41** | Command docs + one-prompt usage guide (this PR) |
+
+Next optional: smoke test against live Telegram if operator approves.
