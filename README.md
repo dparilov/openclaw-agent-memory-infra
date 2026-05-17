@@ -6,6 +6,20 @@ compact facts across sessions — without losing context between handoffs.
 
 ---
 
+## Install
+
+```bash
+git clone <PME_GIT_URL> "$HOME/projects/openclaw-agent-memory-infra"
+export PME_REPO="$HOME/projects/openclaw-agent-memory-infra"
+export PROJECTS_ROOT="$HOME/projects"
+```
+
+Add the two `export` lines to `~/.bashrc` or `~/.zshrc`.  No pip installs
+required for local mode.  See [docs/INSTALL.md](docs/INSTALL.md) for full
+prerequisites and Telegram setup.
+
+---
+
 ## v1 — Project Memory Extractor (current active path)
 
 The current implemented path is the **Project Memory Extractor v1** — a simple,
@@ -49,6 +63,9 @@ and the one-prompt agent usage guide.
 ---
 
 ## Legacy overview (L0–L4 heavy path)
+---
+
+## Overview
 
 Agents lose context between sessions. This repo provides the tooling to make
 memory **persistent, structured, and shared** across agents working on the same

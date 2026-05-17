@@ -53,6 +53,23 @@ When a script or template references `$PME_REPO` the resolution order is:
 
 ---
 
+## Intentionally not included
+
+PME v1 deliberately excludes:
+
+| Excluded | Reason |
+|---|---|
+| OpenAI / any LLM API calls | Scripts are stdlib-only pipelines; the agent IS the LLM |
+| Vector DB | No embeddings layer; working memory is plain Markdown |
+| `memory-core` or any framework dependency | Zero runtime deps for local mode |
+| Hardcoded Telegram chat IDs | `--chat-id` is always an explicit operator argument |
+| Hardcoded GitHub owner | `<PME_GIT_URL>` placeholder; operator fills in at install time |
+| Hardcoded project root | `$PROJECTS_ROOT` with `$HOME/projects` default |
+| Hardcoded user home paths | All paths derive from `$PME_REPO` / `$PROJECTS_ROOT` / `$HOME` |
+| Billing or quota management | No external service calls from scripts |
+
+---
+
 ## What is NOT portable (requires operator action)
 
 | Item | What to change |
