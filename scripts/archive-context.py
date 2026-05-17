@@ -38,7 +38,7 @@ from typing import NamedTuple
 # Constants
 # ---------------------------------------------------------------------------
 
-ALLOWED_SOURCE_TYPES = ("session_jsonl", "markdown_export", "operator_note")
+ALLOWED_SOURCE_TYPES = ("session_jsonl", "markdown_export", "operator_note", "telegram_topic")
 ALLOWED_ROLES = ("coder", "reviewer", "infra", "unknown")
 DEFAULT_CHUNK_SIZE = 200
 
