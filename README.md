@@ -6,6 +6,47 @@ compact facts across sessions — without losing context between handoffs.
 
 ---
 
+## V1 Quickstart — Project Memory Extractor
+
+The v1 flow is file-first and explicit:
+
+```text
+explicit context → refresh-memory → reviewed working/*.md → recover-memory
+```
+
+**Run:**
+
+```bash
+python3 scripts/refresh-memory.py \
+  --target /path/to/project \
+  --topic 7301:coder \
+  --input /path/to/context.md \
+  --source-type markdown_export \
+  --write
+
+python3 scripts/recover-memory.py \
+  --target /path/to/project \
+  --topic 7301 \
+  --role coder
+```
+
+**`refresh-memory.py`:**
+- Archives explicit local context into `.agent/memory/raw/topic-<id>/chunk-*.md`
+- Prepares draft working memory files in `.agent/memory/working/`
+- Writes no commits and uses no external services
+
+**`recover-memory.py`:**
+- Reads `.agent/AGENT_CONTEXT.md`
+- Reads `.agent/memory/working/*.md`
+- Prints concise startup context for an agent
+
+**Not required for v1:** Telegram/Pyrogram, vector DB, OpenAI embeddings,
+OpenClaw memory-core, wiki build, candidate promotion.
+
+See [`docs/V1_QUICKSTART.md`](docs/V1_QUICKSTART.md) for a step-by-step example.
+
+---
+
 ## Overview
 
 Agents lose context between sessions. This repo provides the tooling to make
