@@ -6,7 +6,49 @@ compact facts across sessions — without losing context between handoffs.
 
 ---
 
-## Overview
+## v1 — Project Memory Extractor (current active path)
+
+The current implemented path is the **Project Memory Extractor v1** — a simple,
+stdlib-only pipeline with no vector DB, no LLM API calls in scripts, and no
+auto-commit.
+
+**Quick start:** [docs/V1_QUICKSTART.md](docs/V1_QUICKSTART.md)
+**Full command reference:** [docs/REFRESH_MEMORY_COMMANDS.md](docs/REFRESH_MEMORY_COMMANDS.md)
+
+### Implemented modes
+
+```bash
+# Local Markdown / JSONL / operator note
+python3 scripts/refresh-memory.py \
+  --target /path/to/project \
+  --topic 7301:coder \
+  --input /path/to/context.md \
+  --source-type markdown_export \
+  --write
+
+# Telegram bounded read (--read-topic --limit, explicit only)
+python3 scripts/refresh-memory.py \
+  --target /path/to/project \
+  --topic 7301:coder \
+  --read-topic \
+  --chat-id -1003596522926 \
+  --limit 200 \
+  --write
+
+# Agent startup recovery
+python3 scripts/recover-memory.py \
+  --target /path/to/project \
+  --topic 7301 \
+  --role coder
+```
+
+See [docs/REFRESH_MEMORY_COMMANDS.md](docs/REFRESH_MEMORY_COMMANDS.md) for all
+modes, report contract, options reference, bootstrap instructions, future modes,
+and the one-prompt agent usage guide.
+
+---
+
+## Legacy overview (L0–L4 heavy path)
 
 Agents lose context between sessions. This repo provides the tooling to make
 memory **persistent, structured, and shared** across agents working on the same
