@@ -1,7 +1,7 @@
 # Memory Rules — Universal Agent Protocol (v1)
 
-**Version:** v1  
-**Scope:** All agents using Project Memory Extractor v1.  
+**Version:** v1
+**Scope:** All agents using Project Memory Extractor v1.
 **No per-project edits required.**
 
 ---
@@ -31,10 +31,10 @@ Do not use vendored copies or other paths unless the operator explicitly overrid
 Default search path: `/home/dima/projects/<project-name>/`
 
 If not found:
-- **Coder:** propose creating it — wait for approval before `mkdir` or `git init`
-- **Reviewer / Infra:** report as blocker — do not create
-
-Never create a remote GitHub repository without explicit operator approval.
+- **Coder:** propose creating the local project directory and initial scaffold.
+  Do not create a remote GitHub repository without explicit operator approval.
+  Do not run destructive commands.
+- **Reviewer / Infra:** report as blocker — do not create the project.
 
 ---
 
@@ -117,16 +117,79 @@ Private memory lives at:
   credentials.md     Token names, purposes, env file locations
   infrastructure.md  Service ports, admin URLs, deployment/restart commands
 ```
+
+**Allowed content:**
+- VPS IPs / hostnames
+- SSH usernames and command patterns
+- Where keys and configs are located (path only, not key content)
+- Env file locations (path only, not contents)
+- Service ports and admin URLs
+- Token names and their purpose (not values)
+- Deployment and restart commands
+- Recovery procedures
+
+**Forbidden content:**
+- Raw secret values (passwords, tokens, private keys, API keys)
+- GitHub tokens, Telegram bot tokens, OAuth secrets
+
+**Rules:**
+- Never commit `.agent/memory/private/` — it must be in `.gitignore`
+- Never copy private memory content into `working/*.md`, docs, PR descriptions, or commit messages
+- When reporting on private memory updates, summarize category-level changes only
+  - OK: "updated SSH access for vps-prod"
+  - NOT OK: printing any IP, username, or credential value
+- If a chunk contains `[REDACTED:<category>]`, note the category only — do not reconstruct the value
+
+---
+
+## 9. Git policy
+
+**Never commit:**
+- `.agent/memory/private/`
+- `.agent/memory/raw/`
+- `.agent/memory/index/`
+- `.agent/memory/candidates/`
+- `.agent/memory/.locks/`
+
+**Working memory** (`.agent/memory/working/*.md`) may be committed only after
+explicit operator approval. Do not auto-commit or auto-push.
+
+**No auto-push.** The operator approves all git operations.
+
+---
+
+## 10. Secrets policy
+
+Never put secrets (passwords, tokens, private keys, API keys, OAuth secrets) into:
+- `.agent/memory/working/*.md`
+- `README.md`
+- `docs/`
+- PR descriptions
+- Commit messages
+
+Use private memory (`.agent/memory/private/`) for sensitive access and
+infrastructure facts.
+
+When reporting on private memory updates, summarize at category level only.
+Do not print raw values in any report or message.
+
+---
+
+## 11. Standard report
+
+After completing the startup sequence, return exactly this report:
+
+```
 MEMORY STARTUP REPORT
 
-Project:                  <project-name>
-Project path:             <absolute path>
-Role:                     <coder|reviewer|infra>
-Topic:                    <topic-id>
-Repository:               <git remote URL or local path>
-AGENT_CONTEXT:            OK | MISSING | CREATED
+Project:                   <project-name>
+Project path:              <absolute path>
+Role:                      <coder|reviewer|infra>
+Topic:                     <topic-id>
+Repository:                <git remote URL or local path>
+AGENT_CONTEXT:             OK | MISSING | CREATED
 
-Refresh:                  SKIPPED | PASS | FAIL
+Refresh:                   SKIPPED | PASS | FAIL
 Telegram messages fetched: <N> | N/A
 Telegram messages archived: <N> | N/A
 Raw chunks written:        <N> | N/A
@@ -141,7 +204,7 @@ Blockers:                  <list or none>
 
 ---
 
-## 11. LLM policy
+## 12. LLM policy
 
 Scripts (`refresh-memory.py`, `recover-memory.py`, `archive-context.py`,
 `compile-working-memory.py`) MUST NOT call LLM APIs.
@@ -149,8 +212,21 @@ Scripts (`refresh-memory.py`, `recover-memory.py`, `archive-context.py`,
 The agent receiving this protocol IS the LLM and performs:
 - Role inference
 - Project location
-- Semantic autofill of working memory
-- Private memory categorization
+- Semantic autofill of `working/*.md`
+- Private memory categorization and update
 - MEMORY STARTUP REPORT generation
 
 This is intentional and documented. No hidden API spend from scripts.
+
+---
+
+## What agents must NOT do
+
+- Do not run `read-topic` automatically on startup or heartbeat
+- Do not use vector DB, embeddings, or OpenClaw memory-core
+- Do not call LLM APIs from scripts
+- Do not auto-commit or auto-push working or private memory
+- Do not add candidate promotion, wiki build, or multi-topic orchestration
+- Do not create remote GitHub repos without operator approval
+- Do not touch target project repos beyond `.agent/memory/`
+- Do not leave `<!-- TODO -->` placeholders after a refresh cycle

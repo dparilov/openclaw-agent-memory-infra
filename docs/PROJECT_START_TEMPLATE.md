@@ -31,9 +31,10 @@ Follow `docs/MEMORY_RULES_TEMPLATE.md` exactly.
 3. **Locate the memory extractor** at `/home/dima/projects/openclaw-agent-memory-infra`.
 4. **Locate the target project** under `/home/dima/projects/` using the project name above.
 5. **If the project does not exist:**
-   - Coder role: propose creating it (name, directory, initial scaffold) — wait for operator approval before any `git init` or `mkdir`.
+   - Coder role: propose creating the local project directory and initial scaffold.
+     Do not create a remote GitHub repository without explicit operator approval.
+     Do not run destructive commands.
    - Reviewer / infra role: report blocker — do not create the project.
-   - Never create a remote GitHub repo without explicit operator approval.
 6. **Ensure `.agent/AGENT_CONTEXT.md` exists.** If missing, create it from the bootstrap template in `docs/REFRESH_MEMORY_COMMANDS.md`.
 7. **Run refresh-memory** if memory is missing, stale (working/*.md older than 24 h), or operator explicitly requested refresh.
 8. **Autofill working memory** — do not leave `<!-- TODO -->` placeholders. Fill all sections using context from the refresh output.
