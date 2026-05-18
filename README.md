@@ -1,8 +1,17 @@
 # openclaw-agent-memory-infra
 
-**Shared memory infrastructure for OpenClaw agents.** Provides a multi-layer
-knowledge management system (L0–L4) that lets agents persist, retrieve, and
-compact facts across sessions — without losing context between handoffs.
+**Shared memory infrastructure for OpenClaw agents.** The current active path
+is the **Project Memory Extractor v1** — a simple, stdlib-only pipeline with no
+vector DB, no LLM API calls in scripts, and no auto-commit.
+
+---
+
+## New users — start here
+
+1. [docs/INSTALL.md](docs/INSTALL.md) — installation walkthrough
+2. [docs/V1_QUICKSTART.md](docs/V1_QUICKSTART.md) — four-step daily workflow
+3. [docs/PROJECT_START_TEMPLATE.md](docs/PROJECT_START_TEMPLATE.md) — send to agent to start a project
+4. [docs/MEMORY_RULES_TEMPLATE.md](docs/MEMORY_RULES_TEMPLATE.md) — universal agent rules
 
 ---
 
@@ -22,483 +31,121 @@ prerequisites and Telegram setup.
 
 ## v1 — Project Memory Extractor (current active path)
 
-The current implemented path is the **Project Memory Extractor v1** — a simple,
-stdlib-only pipeline with no vector DB, no LLM API calls in scripts, and no
-auto-commit.
-
-**Quick start:** [docs/V1_QUICKSTART.md](docs/V1_QUICKSTART.md)
-**Full command reference:** [docs/REFRESH_MEMORY_COMMANDS.md](docs/REFRESH_MEMORY_COMMANDS.md)
-
-### Implemented modes
-
-```bash
-# Local Markdown / JSONL / operator note
-python3 scripts/refresh-memory.py \
-  --target /path/to/project \
-  --topic 7301:coder \
-  --input /path/to/context.md \
-  --source-type markdown_export \
-  --write
-
-# Telegram bounded read (--read-topic --limit, explicit only)
-python3 scripts/refresh-memory.py \
-  --target /path/to/project \
-  --topic 7301:coder \
-  --read-topic \
-  --chat-id -1003596522926 \
-  --limit 200 \
-  --write
-
-# Agent startup recovery
-python3 scripts/recover-memory.py \
-  --target /path/to/project \
-  --topic 7301 \
-  --role coder
-```
-
-See [docs/REFRESH_MEMORY_COMMANDS.md](docs/REFRESH_MEMORY_COMMANDS.md) for all
-modes, report contract, options reference, bootstrap instructions, future modes,
-and the one-prompt agent usage guide.
-
----
-
-## Legacy overview (L0–L4 heavy path)
-
-Agents lose context between sessions. This repo provides the tooling to make
-memory **persistent, structured, and shared** across agents working on the same
-project or Telegram topic.
-
-### Memory Layer Model
-
-```
-L0  Raw Archive    .agent/memory/raw/          Audit log — append-only, never read by agents
-L1  Candidates     .agent/memory/candidates/   YAML fact queue — promote or reject
-L2  Working Memory .agent/memory/topic-<id>.md Canonical facts — loaded at session start
-L3  Knowledge Wiki .agent/memory/wiki/         Cross-referenced, searchable (auto-built)
-L4  Canonical Docs docs/ + .agent/AGENT_CONTEXT.md  Architecture, runbooks, ADR
-```
-
-### Skill Stack
-
-| Skill | When to call |
-|-------|-------------|
-| `/read-context` | Session start — load L2–L4 context |
-| `/archive-context` | Session end — persist new facts to L2 |
-| `/recover-memory` | After >24h gap — reality check + full restore |
-| `/compact-memory` | Periodic — merge duplicates, resolve conflicts |
-| `read-topic.py` | Live Telegram read — Pyrogram fallback |
-
----
-
-## PME v1 — Two-Command Workflow (Recommended)
-
-Project Memory Extractor v1 is the current production workflow. Two commands
-cover the full daily cycle:
+Two commands cover the full daily cycle:
 
 ```bash
 # Refresh from Telegram bounded read
 python3 "$PME_REPO/scripts/refresh-memory.py" \
-  --target "$PROJECTS_ROOT/my-project" \
-  --topic 7301:coder \
+  --target "$PROJECTS_ROOT/<project-dir>" \
+  --topic "<TOPIC_ID>:<ROLE>" \
   --read-topic \
-  --chat-id <chat-id> \
+  --chat-id "<CHAT_ID>" \
   --limit 200 \
   --write
 
-# Recover startup context
+# Agent startup recovery
 python3 "$PME_REPO/scripts/recover-memory.py" \
-  --target "$PROJECTS_ROOT/my-project" \
-  --topic 7301 \
-  --role coder
+  --target "$PROJECTS_ROOT/<project-dir>" \
+  --topic "<TOPIC_ID>" \
+  --role "<ROLE>"
 ```
 
-Set two env vars in `~/.bashrc` or `~/.zshrc`:
+`<ROLE>` is one of: `coder`, `reviewer`, `infra`.
 
-```bash
-export PME_REPO="$HOME/projects/openclaw-agent-memory-infra"
-export PROJECTS_ROOT="$HOME/projects"
-```
+**Full command reference:** [docs/REFRESH_MEMORY_COMMANDS.md](docs/REFRESH_MEMORY_COMMANDS.md)
 
-**v1 docs:**
+---
+
+## v1 docs
 
 | Doc | Purpose |
 |---|---|
 | [docs/INSTALL.md](docs/INSTALL.md) | Installation walkthrough |
-| [docs/V1_QUICKSTART.md](docs/V1_QUICKSTART.md) | Two-command daily workflow |
+| [docs/V1_QUICKSTART.md](docs/V1_QUICKSTART.md) | Four-step daily workflow |
 | [docs/PORTABILITY.md](docs/PORTABILITY.md) | Env vars, discovery order, private repo setup |
 | [docs/AGENT_STARTUP_AUTOFILL_PROTOCOL.md](docs/AGENT_STARTUP_AUTOFILL_PROTOCOL.md) | Startup sequence + MEMORY STARTUP REPORT |
 | [docs/PROJECT_START_TEMPLATE.md](docs/PROJECT_START_TEMPLATE.md) | Operator template for new projects |
-| [docs/MEMORY_RULES_TEMPLATE.md](docs/MEMORY_RULES_TEMPLATE.md) | Memory rules (12 sections, copy into MEMORY.md) |
+| [docs/MEMORY_RULES_TEMPLATE.md](docs/MEMORY_RULES_TEMPLATE.md) | Universal agent rules (no per-project edits required) |
+| [docs/REFRESH_MEMORY_COMMANDS.md](docs/REFRESH_MEMORY_COMMANDS.md) | Full command reference |
 
 ---
 
-## First Time? Start Here
+## Operator model
 
-For the current v1 path, start with:
+The operator sends two files to the agent:
 
-- [docs/INSTALL.md](docs/INSTALL.md)
-- [docs/V1_QUICKSTART.md](docs/V1_QUICKSTART.md)
-- [docs/PROJECT_START_TEMPLATE.md](docs/PROJECT_START_TEMPLATE.md)
-- [docs/MEMORY_RULES_TEMPLATE.md](docs/MEMORY_RULES_TEMPLATE.md)
+1. `docs/PROJECT_START_TEMPLATE.md` — edit only: **Project name**, **Project scope**
+2. `docs/MEMORY_RULES_TEMPLATE.md` — no edits required
 
-Legacy setup docs remain in `docs/` for historical reference but are not the v1 path.
-
----
-
-## Quick Start
-
-```bash
-# 1. Clone
-git clone https://github.com/your-org/openclaw-agent-memory-infra
-cd openclaw-agent-memory-infra
-
-# 2. Bootstrap your project
-bash setup.sh --target /path/to/your/project --topic-id 7301
-
-# 3. Edit AGENT_CONTEXT.md
-nano /path/to/your/project/.agent/AGENT_CONTEXT.md
-
-# 4. Archive existing session history
-python3 scripts/context_access/archive-batch-v2.py 7301 --status
-python3 scripts/context_access/archive-batch-v2.py 7301 \
-  --write - --session-id init-$(date +%Y%m%d) \
-  --memory-dir /path/to/your/project/.agent/memory \
-  --auto-mark-done
-
-# 5. Build wiki
-python3 scripts/context_access/build-wiki.py \
-  --memory-dir /path/to/your/project/.agent/memory
-
-# 6. Validate wiki integrity
-python3 scripts/context_access/validate-wiki.py \
-  --memory-dir /path/to/your/project/.agent/memory
-```
-
-**Requirements:** Python 3.10+, `pyyaml`, `pyrogram` — see [docs/deployment.md](docs/deployment.md) for full setup including CLI requirements for skill commands.
+No required edits for: chat ID, topic ID, role, path, repo URL, GitHub owner.
+The agent infers or discovers those from session metadata, or reports a blocker
+if unavailable.
 
 ---
 
-## Scripts
+## Dependencies
 
-### `scripts/context_access/archive-batch-v2.py`
+| Dependency | Required for |
+|---|---|
+| `git` | cloning the PME repo |
+| Python 3.10+ | all scripts (stdlib only for local mode) |
+| GitHub access (SSH or HTTPS token) | cloning the private PME repo |
+| Pyrogram userbot session | `--read-topic` Telegram mode only |
 
-Core archive engine. Reads OpenClaw JSONL session transcripts, deduplicates,
-and writes facts to the L2 memory file.
-
-```bash
-# Check archive status
-python3 archive-batch-v2.py <topic-id> --status
-
-# Preview a batch (read-only)
-python3 archive-batch-v2.py <topic-id> --batch 0
-
-# Write facts to memory
-python3 archive-batch-v2.py <topic-id> --write facts.txt \
-  --session-id <uuid> --memory-dir .agent/memory --auto-mark-done
-
-# Prepare file for LLM compaction (read-only)
-python3 archive-batch-v2.py <topic-id> --compact \
-  --memory-file .agent/memory/topic-<id>.md
-```
-
-**Key flags:**
-
-| Flag | Description |
-|------|-------------|
-| `--status` | Show progress, batch counts, dedupe stats |
-| `--total` | Show total message/batch counts |
-| `--batch N` | Preview batch N (read-only) |
-| `--write FILE` | Append facts from FILE (or `-` for stdin) to memory |
-| `--session-id ID` | Idempotency key — same ID skips re-archiving |
-| `--memory-file PATH` | Explicit memory file path |
-| `--memory-dir DIR` | Auto-named `topic-<id>.md` in this directory |
-| `--auto-mark-done` | Mark batch as processed after successful write |
-| `--compact` | Print memory file for LLM compaction (read-only) |
-| `--reset` | Clear progress file (destructive) |
-| `--agents-base PATH` | Override `~/.openclaw/agents/` |
-
-### `scripts/context_access/read-topic.py`
-
-Pyrogram userbot reader. Fetches live Telegram topic history as fallback when
-session files don't cover a time period.
-
-```bash
-# Read last 200 messages
-python3 read-topic.py telemost --limit 200
-
-# Read only new messages since last checkpoint
-python3 read-topic.py 7301 --since-id 15800
-
-# Structured output for write pipeline
-python3 read-topic.py 7301 --batch-format --since-id 15800
-
-# Sub-batch with checkpoint (large topics)
-python3 read-topic.py 7301 --limit 2000 --sub-batch-size 200
-python3 read-topic.py 7301 --resume  # continue from checkpoint
-```
-
-**Key flags:**
-
-| Flag | Description |
-|------|-------------|
-| `--limit N` | Max messages (default: 500) |
-| `--since-id ID` | Delta read — only messages after this ID |
-| `--batch-format` | Structured transcript for write pipeline |
-| `--sub-batch-size N` | Output N messages, write checkpoint (default: 200) |
-| `--resume` | Load `since_id` from checkpoint automatically |
-| `--clear-checkpoint` | Delete checkpoint file |
-| `--chat-id ID` | Override auto-discovered chat ID |
-
-**Environment:**
-
-| Var | Default | Description |
-|-----|---------|-------------|
-| `OPENCLAW_AGENTS` | `~/.openclaw/agents` | Session files root |
-| `PYROGRAM_SESSION` | `~/.openclaw/workspace/ops/userbot` | Session file path |
-| `PYROGRAM_VENV` | auto-detect | PyPI packages path |
-
-### `scripts/context_access/manage-candidates.py`
-
-L1 candidate knowledge manager. Intermediate layer between fact extraction and
-L2 memory — each fact goes through a status lifecycle before promotion.
-
-```bash
-# Add candidates from fact file
-python3 manage-candidates.py 7301 --add facts.txt --memory-dir .agent/memory
-
-# List all candidates
-python3 manage-candidates.py 7301 --list
-
-# Auto-promote low-risk candidates to L2
-python3 manage-candidates.py 7301 --promote-auto
-
-# Human approval for high-risk candidates
-python3 manage-candidates.py 7301 --approve CAND-A1B2C3D4
-
-# Reject a candidate
-python3 manage-candidates.py 7301 --reject CAND-A1B2C3D4
-```
-
-**Candidate statuses:**
-
-| Status | Meaning |
-|--------|---------|
-| `candidate` | Freshly extracted, pending review |
-| `auto-promoted` | Low-risk type, auto-written to L2 |
-| `needs-approval` | High-risk type (decisions, constraints), requires human gate |
-| `approved` | Manually approved, written to L2 |
-| `rejected` | Explicitly discarded |
-| `obsolete` | Superseded by newer candidate |
-| `duplicate` | Semantically equivalent to existing L2 fact |
-
-**Type classification** (heuristic, from fact text):
-
-- `architecture_decision` → requires approval
-- `constraint` → requires approval
-- `process_rule` → requires approval
-- `fact`, `preference`, `project_state`, `resolved_issue` → auto-promotable
-
-### `scripts/context_access/build-wiki.py`
-
-L3 Knowledge Vault builder. Generates a cross-referenced Markdown wiki from
-all L2 memory files. Neutral — no agent-specific logic.
-
-```bash
-# Build wiki from all memory files
-python3 build-wiki.py --memory-dir .agent/memory
-
-# Rebuild from scratch
-python3 build-wiki.py --memory-dir .agent/memory --clean
-
-# Single topic
-python3 build-wiki.py --memory-dir .agent/memory --topic telemost
-```
-
-**Output structure:**
-```
-.agent/memory/wiki/
-├── index.md              Master index (all topics + stats)
-├── topic-<id>.md         Per-topic wiki (facts grouped by type)
-├── by-type/
-│   ├── decisions.md      Architecture decisions across all topics
-│   ├── constraints.md
-│   ├── process.md
-│   └── ...
-└── WIKI_META.json        Build metadata
-```
-
-### `scripts/context_access/validate-wiki.py`
-
-Pre-live integrity checker for the L3 Knowledge Vault.
-
-```bash
-python3 validate-wiki.py --memory-dir .agent/memory
-python3 validate-wiki.py --memory-dir .agent/memory --strict
-python3 validate-wiki.py --memory-dir .agent/memory --json
-python3 validate-wiki.py --memory-dir .agent/memory --write-report .agent/memory/reports/wiki-audit.md
-```
-
-Checks WIKI_META schema, source file existence, source sha256/mtime freshness,
-fact provenance, line numbers, topic pages, by-type pages, and conflict counts.
+**Not required:**
+- OpenAI or any other LLM API — scripts are stdlib-only pipelines; the agent IS the LLM
+- Vector DB / embeddings
+- OpenClaw `memory-core` or any framework dependency
+- wiki build, candidate promotion
+- LLM API calls from scripts
 
 ---
 
-## Skills
-
-Copy skills to your Claude Code skill directory:
-
-```bash
-cp -r skills/archive-context ~/.claude/skills/
-cp -r skills/read-topic ~/.claude/skills/
-cp -r skills/recover-memory ~/.claude/skills/
-cp -r skills/compact-memory ~/.claude/skills/
-```
-
-| Skill | Trigger |
-|-------|---------|
-| `archive-context` | `/archive-context <topic>` |
-| `read-topic` | `/read-topic <topic>` |
-| `recover-memory` | `/recover-memory <topic>` — full 4-step restore |
-| `compact-memory` | `/compact-memory <topic>` — LLM dedup pass |
-
-See `docs/SKILL_VOCABULARY.md` for decision guide on when to call each skill.
-
----
-
-## Project Structure
+## Validated v1 flow
 
 ```
-.
-├── .agent-template/            Bootstrap template for new projects
-│   ├── AGENT_CONTEXT.md        Project context template (copy to .agent/)
-│   ├── bootstrap.sh            Quick bootstrap script
-│   └── memory/
-├── docs/
-│   ├── SETUP_WIZARD_FLOW.md    Canonical setup wizard with Phase 0 path selection (primary onboarding)
-│   ├── OAUTH_GATE_CARDS.md     Auth failure remediation cards (OA-1 through OA-8)
-│   ├── COLD_TEST_FINDINGS_2026-05-04.md  Phase 1 cold run findings (8 items)
-│   ├── TARGET_PROJECT_SELECTION.md  Project selection modes and ACK format
-│   ├── FINAL_AGENT_INSTRUCTION_PACK.md  Ready-to-send agent prompts (wizard Phase 8)
-│   ├── FULL_ENVIRONMENT_ONBOARDING.md  Environment gate reference (A–K)
-│   ├── EXTERNAL_TO_INFRA_HANDOFF.md  Fallback/escalation path to infra agent
-│   ├── ROADMAP.md              Implementation phases (1–5)
-│   ├── PRE_LIVE_CHECKLIST.md   Pre-live integrity workflow
-│   ├── MEMORY_OUTPUT_CONTRACT.md  Output format spec for memory files
-│   ├── MEMORY_EXTRACTION_POLICY.md  What to extract and when
-│   ├── SKILL_VOCABULARY.md     When to call which skill
-│   ├── FALLBACK_ORDER.md       Context access fallback chain
-│   ├── PYROGRAM_FLOOD_WAIT.md  FloodWait + SQLite lock handling
-│   └── runbooks/
-│       ├── CODER_AGENT.md
-│       ├── REVIEWER_AGENT.md
-│       ├── INFRA_AGENT.md
-│       └── HANDOFF_TEMPLATE.md
-├── scripts/
-│   └── context_access/
-│       ├── archive-batch-v2.py  Core archive engine (L2 write)
-│       ├── read-topic.py        Pyrogram reader (L0/live fallback)
-│       ├── manage-candidates.py L1 candidate lifecycle manager
-│       ├── build-wiki.py        L3 wiki builder
-│       └── validate-wiki.py     Pre-live L3 integrity checker
-├── skills/
-│   ├── archive-context/SKILL.md
-│   ├── read-topic/SKILL.md
-│   ├── recover-memory/SKILL.md
-│   └── compact-memory/SKILL.md
-├── tests/
-│   ├── test_name_resolver.py
-│   └── test_validate_wiki.py
-├── examples/
-│   └── memory/
-│       └── topic-7301.md       Example memory file (telemost pilot)
-├── setup.sh                    Bootstrap script
-└── README.md
+operator sends PROJECT_START_TEMPLATE.md + MEMORY_RULES_TEMPLATE.md
+→ agent infers topic / chat ID / role from session metadata
+→ refresh-memory --read-topic --limit 200 --write
+→ existing raw chunks replaced automatically (no manual cleanup needed)
+→ agent autofills working memory
+→ recover-memory
+→ MEMORY STARTUP REPORT returned
 ```
-
----
-
-## Memory File Format
-
-```markdown
-# Memory: topic-7301
-
-<!-- last-batch: 3 | last-write: 2026-04-27T19:11:00Z | batches: 0-3 -->
-
-## [2026-04-26] Batch 0 — session init-20260426
-
-- Project telemost uses OpenClaw for session management
-- Primary contact: Dima (Telegram: @pariloff)
-- Decided to use append-only memory format to avoid concurrent write conflicts
-
-## [2026-04-27] Batch 1 — session abc123
-
-- Pyrogram FloodWait retry policy: 4 attempts with exponential backoff
-  - ⚠️ CONFLICT: Batch 0 указывал: ...3 attempts...
-```
-
-**Header fields:**
-- `last-batch` — most recent batch number
-- `last-write` — ISO timestamp of last write
-- `batches` — range of batch numbers in file
-- `last-pyrogram-id` — last Pyrogram message ID archived (optional)
-- `last-compact` — timestamp of last compaction (optional)
-
----
-
-## Mandatory Memory Protocol
-
-Every agent using this infrastructure MUST follow these rules (see `.agent-template/AGENT_CONTEXT.md`):
-
-- **NEVER** start a session without `/read-context` (or `/recover-memory` if stale)
-- **NEVER** end a session without `/archive-context` if facts were established
-- **NEVER** ask the user for information already in `memory/topic-*.md`
-- **NEVER** write to memory files directly — only via `archive-batch-v2.py --write`
-- **NEVER** silently accept a contradiction — archive the correction, flag the conflict
-- **IF** `last-write` > 24 hours → run `/recover-memory` before task work
-- **IF** `/recover-memory` fails → report to user; do not proceed as if memory is current
 
 ---
 
 ## Development
 
 ```bash
-# Run tests
 python3 -m pytest tests/ -v
-
-# Syntax check all scripts
-python3 -m py_compile scripts/context_access/*.py
-
-# Check a specific memory file
-python3 scripts/context_access/archive-batch-v2.py <topic> --status
 ```
-
-### Pre-live
-
-```bash
-pytest -v --tb=short
-bash setup.sh --target /tmp/ocami-prelive --install-scripts copy --test
-python scripts/context_access/build-wiki.py --memory-dir .agent/memory --dry-run
-python scripts/context_access/validate-wiki.py --memory-dir .agent/memory
-```
-
-See `docs/PRE_LIVE_CHECKLIST.md`.
 
 ---
 
-## Roadmap
+## Legacy / historical docs
 
-| Phase | Status | Description |
-|-------|--------|-------------|
-| 1 | ✅ Done | Core read/write pipeline, validation, E2E tests |
-| 2 | ✅ Done | `read-topic.py`, skill definitions, runbooks, `.agent-template/` |
-| 3 | ✅ Done | L0 audit log, sub-batch checkpointing, `--compact` flag |
-| 4 | ✅ Done | L1 candidate schema, L3 wiki builder, `setup.sh`, docs |
-| C | ✅ Done | CI hardening, pytest config, e2e marker |
-| D | ✅ Done | Wiki provenance: WIKI_META source index + rendered provenance |
-| E | ✅ Done | Pre-live validation: sha256/mtime, validate-wiki, checklist |
-| F | Next | Business review, Q&A, live-agent acceptance tests |
+The documents below predate the simplified v1 path and are retained for
+historical reference only. **They are not the active v1 path.**
 
-See `docs/ROADMAP.md` for full detail.
+The active v1 path is:
+two operator templates → `refresh-memory` → agent autofill → `recover-memory`.
+
+| Doc | Notes |
+|---|---|
+| `docs/ROADMAP.md` | Implementation phases 1–5 (pre-v1) |
+| `docs/SETUP_WIZARD_FLOW.md` | Wizard-based setup (replaced by two-template operator model) |
+| `docs/FULL_ENVIRONMENT_ONBOARDING.md` | Old environment gate reference (A–K) |
+| `docs/FINAL_AGENT_INSTRUCTION_PACK.md` | Pre-v1 agent prompt packs |
+| `docs/COLD_TEST_FINDINGS_2026-05-04.md` | Cold run findings from earlier phase |
+| `docs/MEMORY_EXTRACTION_POLICY.md` | L1/L2 extraction policy (heavy path) |
+| `docs/CANDIDATE_SCHEMA.md` | L1 candidate lifecycle schema |
+| `docs/MEMORY_OUTPUT_CONTRACT.md` | Output format spec (heavy path) |
+| `docs/PYROGRAM_FLOOD_WAIT.md` | FloodWait handling (direct read-topic usage) |
+| `docs/SKILL_VOCABULARY.md` | Skill decision guide (heavy path) |
+| `docs/FALLBACK_ORDER.md` | Context access fallback chain (heavy path) |
+| `docs/ARCHIVE_CONTEXT_CLI.md` | Direct CLI reference for archive-context.py |
+| `docs/COMPILE_WORKING_MEMORY_CLI.md` | Direct CLI reference for compile-working-memory.py |
 
 ---
 

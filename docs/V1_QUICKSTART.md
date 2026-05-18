@@ -37,7 +37,7 @@ cat > "$PROJECTS_ROOT/<project-dir>/.agent/AGENT_CONTEXT.md" <<'EOF'
 TBD
 
 ## Active Topics
-- topic-7301 — coder role
+- topic-<TOPIC_ID> — <ROLE> role
 
 ## Agent Behavior Notes
 - Use working Markdown memory at startup.
@@ -54,7 +54,7 @@ EOF
 ```bash
 python3 "$PME_REPO/scripts/refresh-memory.py" \
   --target "$PROJECTS_ROOT/<project-dir>" \
-  --topic 7301:coder \
+  --topic <TOPIC_ID>:<ROLE> \
   --input /path/to/context.md \
   --source-type markdown_export \
   --write
@@ -64,7 +64,7 @@ python3 "$PME_REPO/scripts/refresh-memory.py" \
 ```bash
 python3 "$PME_REPO/scripts/refresh-memory.py" \
   --target "$PROJECTS_ROOT/<project-dir>" \
-  --topic 7301:coder \
+  --topic <TOPIC_ID>:<ROLE> \
   --read-topic \
   --chat-id <chat-id> \
   --limit 200 \
@@ -90,8 +90,8 @@ Review the diff before committing.
 ```bash
 python3 "$PME_REPO/scripts/recover-memory.py" \
   --target "$PROJECTS_ROOT/<project-dir>" \
-  --topic 7301 \
-  --role coder
+  --topic <TOPIC_ID> \
+  --role <ROLE>
 ```
 
 The agent reads `.agent/AGENT_CONTEXT.md` and `working/*.md` only —
@@ -111,10 +111,14 @@ ready-to-paste prompt covering the full dry-run → write → fill → verify cy
 
 ```bash
 # Future only — do not use:
---since-id / --until-id      # message id range
---since / --until            # date range
---full / --confirm-large-read  # full history
---topics <multi>             # multi-topic in one call
+## What is NOT implemented in v1
+
+The following flags are future-only. Do not use them in v1:
+
+- `--since-id` / `--until-id` — message id range
+- `--since` / `--until` — date range
+- `--full` / `--confirm-large-read` — full history
+- `--topics <multi>` — multi-topic in one call
 ```
 
 ---
