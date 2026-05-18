@@ -609,11 +609,6 @@ def refresh_telegram(
                     f"ERROR: could not load read-topic.py: {e}\n"
                 )
 
-        # Clear existing raw chunks before archive
-        tg_raw_dir = target / ".agent" / "memory" / "raw" / f"topic-{topic_id}"
-        existing_chunks = _clear_existing_chunks(tg_raw_dir)
-        chunks_replaced = "YES" if existing_chunks > 0 else "NO"
-
         # Call read-topic with --out to write transcript to temp file
         read_argv: List[str] = [
             str(topic_id),
@@ -624,13 +619,24 @@ def refresh_telegram(
         read_code = _run_step(_read_topic_mod, read_argv, warnings, "read-topic")
         if read_code != 0:
             tmp_path.unlink(missing_ok=True)
+            # Read failed: existing chunks were NOT touched
+            tg_raw_dir = target / ".agent" / "memory" / "raw" / f"topic-{topic_id}"
+            surviving = (
+                len(list(tg_raw_dir.glob("chunk-*.md")))
+                if tg_raw_dir.exists() else 0
+            )
             return 1, _build_telegram_report(
                 mode=mode, target=target, topic_id=topic_id, role=role,
                 chat_id=chat_id, limit=limit,
                 archive_status="FAIL", compile_status="SKIP",
                 warnings=warnings, notes_path=notes_path,
-                existing_chunks=existing_chunks, chunks_replaced=chunks_replaced,
+                existing_chunks=surviving, chunks_replaced="NO",
             )
+
+        # Read succeeded: safe to clear existing raw chunks now
+        tg_raw_dir = target / ".agent" / "memory" / "raw" / f"topic-{topic_id}"
+        existing_chunks = _clear_existing_chunks(tg_raw_dir)
+        chunks_replaced = "YES" if existing_chunks > 0 else "NO"
 
         # Estimate messages_fetched from non-empty, non-header lines
         try:

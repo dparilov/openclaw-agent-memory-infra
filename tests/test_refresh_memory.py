@@ -1073,8 +1073,8 @@ class TestExistingChunksReplacement(unittest.TestCase):
             )
             self.assertEqual(code, 0)
 
-    def test_telegram_existing_chunks_cleared_before_archive(self):
-        """chunk-*.md cleared before archive runs in Telegram write mode."""
+    def test_telegram_existing_chunks_cleared_after_read_success(self):
+        """chunk-*.md cleared only AFTER read-topic succeeds, before archive."""
         with tempfile.TemporaryDirectory() as tmp:
             target = _make_target(Path(tmp))
             raw_dir = self._seed_raw_dir(target, "7301")
@@ -1094,6 +1094,23 @@ class TestExistingChunksReplacement(unittest.TestCase):
             self.assertEqual(seen, [False],
                              "old chunk must be absent when archive runs")
 
+    def test_telegram_read_failure_preserves_existing_chunks(self):
+        """If read-topic fails, existing raw chunks are NOT deleted."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            raw_dir = self._seed_raw_dir(target, "7301")
+            code, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", limit=50, write=True,
+                _read_topic_mod=self._rt_mock(code=1),  # read fails
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            self.assertEqual(code, 1)
+            self.assertTrue((raw_dir / "chunk-0001.md").exists(),
+                            "existing chunk must survive a failed read-topic")
+            self.assertIn("Raw chunks replaced: NO", report)
+            self.assertIn("Existing raw chunks: 1", report)
+
     def test_telegram_report_replaced_yes(self):
         """Telegram write report shows 'Raw chunks replaced: YES'."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -1107,6 +1124,19 @@ class TestExistingChunksReplacement(unittest.TestCase):
             )
             self.assertIn("Existing raw chunks: 1", report)
             self.assertIn("Raw chunks replaced: YES", report)
+
+    def test_telegram_report_replaced_no_on_read_failure(self):
+        """Report shows 'Raw chunks replaced: NO' when read-topic fails."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            self._seed_raw_dir(target, "7301")
+            _, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", limit=50, write=True,
+                _read_topic_mod=self._rt_mock(code=1),
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            self.assertIn("Raw chunks replaced: NO", report)
 
     def test_telegram_dry_run_reports_planned_no_delete(self):
         """Telegram dry-run shows 'planned' and does not delete chunks."""
