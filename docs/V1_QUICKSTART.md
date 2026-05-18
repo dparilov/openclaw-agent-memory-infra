@@ -111,12 +111,14 @@ ready-to-paste prompt covering the full dry-run → write → fill → verify cy
 
 ```bash
 # Future only — do not use:
-<!-- NOT IMPLEMENTED IN v1 — do not use:
---since-id / --until-id      # message id range
---since / --until            # date range
---full / --confirm-large-read  # full history
---topics <multi>             # multi-topic in one call
--->
+## What is NOT implemented in v1
+
+The following flags are future-only. Do not use them in v1:
+
+- `--since-id` / `--until-id` — message id range
+- `--since` / `--until` — date range
+- `--full` / `--confirm-large-read` — full history
+- `--topics <multi>` — multi-topic in one call
 ```
 
 ---
