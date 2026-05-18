@@ -77,6 +77,9 @@ def _load_script(name: str):
 
 def _load_read_topic():
     """Load read-topic.py from scripts/context_access/ via importlib."""
+    ctx_dir = str(_SCRIPTS_DIR / "context_access")
+    if ctx_dir not in sys.path:
+        sys.path.insert(0, ctx_dir)
     path = _SCRIPTS_DIR / "context_access" / "read-topic.py"
     spec = importlib.util.spec_from_file_location("read_topic", path)
     mod = importlib.util.module_from_spec(spec)
