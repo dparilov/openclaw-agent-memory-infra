@@ -14,6 +14,7 @@ import types
 import unittest
 from pathlib import Path
 from typing import List, Optional
+from unittest import mock
 
 # ---------------------------------------------------------------------------
 # Load module via importlib (hyphen-safe)
@@ -859,6 +860,97 @@ class TestNotesPassthrough(unittest.TestCase):
                 _archive_mod=arch, _compile_mod=comp,
             )
             self.assertNotIn("--notes", comp._calls[0])
+
+
+# ---------------------------------------------------------------------------
+# TestLoadReadTopicSysPath
+# ---------------------------------------------------------------------------
+
+class TestLoadReadTopicSysPath(unittest.TestCase):
+    """_load_read_topic() must add context_access/ to sys.path before exec."""
+
+    def setUp(self):
+        self._original_path = sys.path[:]
+
+    def tearDown(self):
+        sys.path[:] = self._original_path
+
+    def test_context_access_dir_added_to_sys_path(self):
+        """context_access/ is on sys.path when exec_module runs."""
+        ctx_dir = str(Path(__file__).parent.parent / "scripts" / "context_access")
+        # Remove it so we can verify the function inserts it
+        while ctx_dir in sys.path:
+            sys.path.remove(ctx_dir)
+
+        path_during_exec = []
+
+        def fake_exec_module(mod):
+            path_during_exec.append(ctx_dir in sys.path)
+
+        fake_loader = types.SimpleNamespace(exec_module=fake_exec_module)
+        fake_spec = types.SimpleNamespace(loader=fake_loader)
+        fake_mod = types.ModuleType("read_topic")
+
+        with mock.patch("importlib.util.spec_from_file_location", return_value=fake_spec), \
+             mock.patch("importlib.util.module_from_spec", return_value=fake_mod):
+            try:
+                rm._load_read_topic()
+            except Exception:
+                pass
+
+        self.assertTrue(
+            path_during_exec and path_during_exec[0],
+            "context_access/ was not in sys.path when exec_module was called",
+        )
+
+    def test_context_access_dir_not_duplicated(self):
+        """_load_read_topic() does not insert ctx_dir twice if already present."""
+        ctx_dir = str(Path(__file__).parent.parent / "scripts" / "context_access")
+        if ctx_dir not in sys.path:
+            sys.path.insert(0, ctx_dir)
+        count_before = sys.path.count(ctx_dir)
+
+        fake_loader = types.SimpleNamespace(exec_module=lambda mod: None)
+        fake_spec = types.SimpleNamespace(loader=fake_loader)
+        fake_mod = types.ModuleType("read_topic")
+
+        with mock.patch("importlib.util.spec_from_file_location", return_value=fake_spec), \
+             mock.patch("importlib.util.module_from_spec", return_value=fake_mod):
+            try:
+                rm._load_read_topic()
+            except Exception:
+                pass
+
+        self.assertEqual(sys.path.count(ctx_dir), count_before,
+                         "ctx_dir was duplicated in sys.path")
+
+    def test_sibling_import_via_sys_path_mechanism(self):
+        """Fake read-topic.py that imports a sibling loads successfully
+        when the directory is prepended to sys.path (same mechanism
+        as the fixed _load_read_topic)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            # sibling module
+            (tmp_path / "io_utils.py").write_text(
+                "VALUE = 'sibling_ok'\n", encoding="utf-8"
+            )
+            # fake read-topic that imports the sibling
+            (tmp_path / "read-topic.py").write_text(
+                "import io_utils\nRESULT = io_utils.VALUE\n", encoding="utf-8"
+            )
+
+            ctx_dir = str(tmp_path)
+            if ctx_dir not in sys.path:
+                sys.path.insert(0, ctx_dir)
+
+            spec = importlib.util.spec_from_file_location(
+                "read_topic_fake", tmp_path / "read-topic.py"
+            )
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+
+            self.assertEqual(mod.RESULT, "sibling_ok")
+            # tearDown restores sys.path
 
 
 # ---------------------------------------------------------------------------
