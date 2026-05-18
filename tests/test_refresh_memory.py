@@ -863,6 +863,296 @@ class TestNotesPassthrough(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# TestClearExistingChunks
+# ---------------------------------------------------------------------------
+
+class TestClearExistingChunks(unittest.TestCase):
+    """Unit tests for _clear_existing_chunks()."""
+
+    def test_returns_zero_when_dir_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(rm._clear_existing_chunks(Path(tmp) / "nope"), 0)
+
+    def test_empty_dir_returns_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp) / "raw"
+            d.mkdir()
+            self.assertEqual(rm._clear_existing_chunks(d), 0)
+
+    def test_deletes_chunk_files_returns_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp) / "raw"
+            d.mkdir()
+            (d / "chunk-0001.md").write_text("a", encoding="utf-8")
+            (d / "chunk-0002.md").write_text("b", encoding="utf-8")
+            count = rm._clear_existing_chunks(d)
+            self.assertEqual(count, 2)
+            self.assertFalse((d / "chunk-0001.md").exists())
+            self.assertFalse((d / "chunk-0002.md").exists())
+
+    def test_preserves_non_chunk_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp) / "raw"
+            d.mkdir()
+            (d / "chunk-0001.md").write_text("x", encoding="utf-8")
+            (d / "notes.txt").write_text("keep", encoding="utf-8")
+            rm._clear_existing_chunks(d)
+            self.assertTrue((d / "notes.txt").exists())
+
+    def test_directory_itself_preserved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp) / "raw"
+            d.mkdir()
+            (d / "chunk-0001.md").write_text("x", encoding="utf-8")
+            rm._clear_existing_chunks(d)
+            self.assertTrue(d.exists())
+
+
+# ---------------------------------------------------------------------------
+# TestExistingChunksReplacement
+# ---------------------------------------------------------------------------
+
+class TestExistingChunksReplacement(unittest.TestCase):
+    """refresh() and refresh_telegram() pre-clear chunk-*.md before archive."""
+
+    def _seed_raw_dir(self, target: Path, topic_id: str,
+                      extra_file: Optional[str] = None) -> Path:
+        raw_dir = target / ".agent" / "memory" / "raw" / f"topic-{topic_id}"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        (raw_dir / "chunk-0001.md").write_text("old", encoding="utf-8")
+        if extra_file:
+            (raw_dir / extra_file).write_text("keep", encoding="utf-8")
+        return raw_dir
+
+    def _rt_mock(self, code: int = 0):
+        """read-topic mock that writes a transcript to --out."""
+        def fake_main(argv=None):
+            for i, a in enumerate(list(argv or [])):
+                if a == "--out" and i + 1 < len(argv):
+                    Path(argv[i + 1]).write_text("msg\n", encoding="utf-8")
+            return code
+        return types.SimpleNamespace(main=fake_main)
+
+    # --- local mode ---
+
+    def test_local_write_succeeds_with_existing_chunks(self):
+        """refresh() write succeeds even when chunk-0001.md already exists."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            inp = _make_input(Path(tmp))
+            self._seed_raw_dir(target, "7301")
+            code, _ = rm.refresh(
+                target=target, topic_id="7301", role="coder",
+                input_path=inp, source_type="markdown_export",
+                write=True,
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            self.assertEqual(code, 0)
+
+    def test_existing_chunks_cleared_before_archive_local(self):
+        """chunk-*.md are deleted before archive step fires (local mode)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            inp = _make_input(Path(tmp))
+            raw_dir = self._seed_raw_dir(target, "7301")
+            seen = []
+
+            def checking_archive(argv=None):
+                seen.append((raw_dir / "chunk-0001.md").exists())
+                return 0
+
+            rm.refresh(
+                target=target, topic_id="7301", role="coder",
+                input_path=inp, source_type="markdown_export",
+                write=True,
+                _archive_mod=types.SimpleNamespace(main=checking_archive),
+                _compile_mod=_mock_mod(0),
+            )
+            self.assertEqual(seen, [False],
+                             "old chunk must be absent when archive runs")
+
+    def test_non_chunk_file_preserved_local(self):
+        """Non-chunk files in the raw dir survive the clear."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            inp = _make_input(Path(tmp))
+            raw_dir = self._seed_raw_dir(target, "7301", extra_file="notes.txt")
+            rm.refresh(
+                target=target, topic_id="7301", role="coder",
+                input_path=inp, source_type="markdown_export",
+                write=True,
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            self.assertTrue((raw_dir / "notes.txt").exists())
+
+    def test_other_topic_chunks_preserved_local(self):
+        """Chunks in a different topic directory are not touched."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            inp = _make_input(Path(tmp))
+            other = self._seed_raw_dir(target, "9999")
+            rm.refresh(
+                target=target, topic_id="7301", role="coder",
+                input_path=inp, source_type="markdown_export",
+                write=True,
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            self.assertTrue((other / "chunk-0001.md").exists())
+
+    def test_local_report_replaced_yes(self):
+        """Report shows 'Raw chunks replaced: YES' when prior chunks existed."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            inp = _make_input(Path(tmp))
+            self._seed_raw_dir(target, "7301")
+            _, report = rm.refresh(
+                target=target, topic_id="7301", role="coder",
+                input_path=inp, source_type="markdown_export",
+                write=True,
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            self.assertIn("Existing raw chunks: 1", report)
+            self.assertIn("Raw chunks replaced: YES", report)
+
+    def test_local_report_replaced_no_when_fresh(self):
+        """Report shows 'Raw chunks replaced: NO' when no prior chunks."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            inp = _make_input(Path(tmp))
+            _, report = rm.refresh(
+                target=target, topic_id="7301", role="coder",
+                input_path=inp, source_type="markdown_export",
+                write=True,
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            self.assertIn("Existing raw chunks: 0", report)
+            self.assertIn("Raw chunks replaced: NO", report)
+
+    def test_dry_run_reports_planned_no_delete_local(self):
+        """Dry-run: report says 'planned'; existing chunk is NOT deleted."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            inp = _make_input(Path(tmp))
+            raw_dir = self._seed_raw_dir(target, "7301")
+            _, report = rm.refresh(
+                target=target, topic_id="7301", role="coder",
+                input_path=inp, source_type="markdown_export",
+                write=False,
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            self.assertIn("Raw chunks replaced: planned", report)
+            self.assertTrue((raw_dir / "chunk-0001.md").exists(),
+                            "dry-run must not delete existing chunks")
+
+    def test_dry_run_no_existing_shows_no_local(self):
+        """Dry-run with no existing chunks shows 'Raw chunks replaced: NO'."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            inp = _make_input(Path(tmp))
+            _, report = rm.refresh(
+                target=target, topic_id="7301", role="coder",
+                input_path=inp, source_type="markdown_export",
+                write=False,
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            self.assertIn("Existing raw chunks: 0", report)
+            self.assertIn("Raw chunks replaced: NO", report)
+
+    # --- Telegram mode ---
+
+    def test_telegram_write_succeeds_with_existing_chunks(self):
+        """refresh_telegram() write succeeds when chunk-0001.md already exists."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            self._seed_raw_dir(target, "7301")
+            code, _ = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", limit=50, write=True,
+                _read_topic_mod=self._rt_mock(),
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            self.assertEqual(code, 0)
+
+    def test_telegram_existing_chunks_cleared_after_read_success(self):
+        """chunk-*.md cleared only AFTER read-topic succeeds, before archive."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            raw_dir = self._seed_raw_dir(target, "7301")
+            seen = []
+
+            def checking_archive(argv=None):
+                seen.append((raw_dir / "chunk-0001.md").exists())
+                return 0
+
+            rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", limit=50, write=True,
+                _read_topic_mod=self._rt_mock(),
+                _archive_mod=types.SimpleNamespace(main=checking_archive),
+                _compile_mod=_mock_mod(0),
+            )
+            self.assertEqual(seen, [False],
+                             "old chunk must be absent when archive runs")
+
+    def test_telegram_read_failure_preserves_existing_chunks(self):
+        """If read-topic fails, existing raw chunks are NOT deleted."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            raw_dir = self._seed_raw_dir(target, "7301")
+            code, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", limit=50, write=True,
+                _read_topic_mod=self._rt_mock(code=1),  # read fails
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            self.assertEqual(code, 1)
+            self.assertTrue((raw_dir / "chunk-0001.md").exists(),
+                            "existing chunk must survive a failed read-topic")
+            self.assertIn("Raw chunks replaced: NO", report)
+            self.assertIn("Existing raw chunks: 1", report)
+
+    def test_telegram_report_replaced_yes(self):
+        """Telegram write report shows 'Raw chunks replaced: YES'."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            self._seed_raw_dir(target, "7301")
+            _, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", limit=50, write=True,
+                _read_topic_mod=self._rt_mock(),
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            self.assertIn("Existing raw chunks: 1", report)
+            self.assertIn("Raw chunks replaced: YES", report)
+
+    def test_telegram_report_replaced_no_on_read_failure(self):
+        """Report shows 'Raw chunks replaced: NO' when read-topic fails."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            self._seed_raw_dir(target, "7301")
+            _, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", limit=50, write=True,
+                _read_topic_mod=self._rt_mock(code=1),
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            self.assertIn("Raw chunks replaced: NO", report)
+
+    def test_telegram_dry_run_reports_planned_no_delete(self):
+        """Telegram dry-run shows 'planned' and does not delete chunks."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            raw_dir = self._seed_raw_dir(target, "7301")
+            _, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", limit=50, write=False,
+            )
+            self.assertIn("Raw chunks replaced: planned", report)
+            self.assertTrue((raw_dir / "chunk-0001.md").exists(),
+                            "dry-run must not delete chunks")
+
+
+# ---------------------------------------------------------------------------
 # TestLoadReadTopicSysPath
 # ---------------------------------------------------------------------------
 
@@ -1129,15 +1419,33 @@ class TestIntegration(unittest.TestCase):
                     f"working file not created: {fname}",
                 )
 
-    def test_overwrite_guard_prevents_second_write(self):
-        """archive-context overwrite guard: second write run must exit 1."""
+    def test_second_write_succeeds_via_refresh_memory(self):
+        """refresh-memory pre-clears chunks, so a second --write run succeeds."""
         with tempfile.TemporaryDirectory() as tmp:
             target, inp = self._make_fixture(Path(tmp))
             argv = self._base_argv(target, inp) + ["--write"]
             code1 = rm.main(argv)
             self.assertEqual(code1, 0, "first write should succeed")
             code2 = rm.main(argv)
-            self.assertEqual(code2, 1, "second write should fail (overwrite guard)")
+            self.assertEqual(code2, 0, "second write should also succeed (chunks pre-cleared)")
+
+    def test_archive_direct_overwrite_guard_unchanged(self):
+        """Calling archive-context.py directly twice still fails on second write."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target, inp = self._make_fixture(Path(tmp))
+            arch = rm._load_script("archive-context")
+            argv = [
+                "--target", str(target),
+                "--topic", "7301", "--role", "coder",
+                "--input", str(inp),
+                "--source-type", "markdown_export",
+                "--chunk-size", "1", "--write",
+            ]
+            code1 = arch.main(argv)
+            self.assertEqual(code1, 0, "first direct archive write should succeed")
+            code2 = arch.main(argv)
+            self.assertEqual(code2, 1,
+                             "archive-context overwrite guard must still reject second write")
 
     def test_write_report_shows_pass_for_both_steps(self):
         """Write mode report must show PASS for archive and compile."""

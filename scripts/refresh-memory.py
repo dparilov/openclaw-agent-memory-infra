@@ -75,6 +75,21 @@ def _load_script(name: str):
     return mod
 
 
+def _clear_existing_chunks(raw_dir: Path) -> int:
+    """
+    Delete chunk-*.md files in raw_dir (write mode only).
+    Returns the number of files deleted.
+    Does not remove the directory or any non-chunk files.
+    """
+    if not raw_dir.exists():
+        return 0
+    count = 0
+    for chunk in sorted(raw_dir.glob("chunk-*.md")):
+        chunk.unlink()
+        count += 1
+    return count
+
+
 def _load_read_topic():
     """Load read-topic.py from scripts/context_access/ via importlib."""
     ctx_dir = str(_SCRIPTS_DIR / "context_access")
@@ -187,6 +202,8 @@ def _build_report(
     planned_chunks: int = 0,
     notes_path: Optional[Path] = None,
     raw_chunk_paths: Optional[List[Path]] = None,
+    existing_chunks: int = 0,
+    chunks_replaced: str = "NO",
 ) -> str:
     raw_dir = f".agent/memory/raw/topic-{topic_id}/"
     warn_lines = "\n".join(f"- {w}" for w in warnings) if warnings else "- none"
@@ -247,6 +264,8 @@ def _build_report(
         f"Topic: {topic_id}\n"
         f"Role: {role}\n\n"
         f"{input_section}\n\n"
+        f"Existing raw chunks: {existing_chunks}\n"
+        f"Raw chunks replaced: {chunks_replaced}\n\n"
         f"Archive step: {archive_status}\n"
         f"Compile step: {compile_status}\n\n"
         f"Raw output:\n- {raw_dir}\n\n"
@@ -282,6 +301,8 @@ def _build_telegram_report(
     planned: bool = False,
     notes_path: Optional[Path] = None,
     raw_chunk_paths: Optional[List[Path]] = None,
+    existing_chunks: int = 0,
+    chunks_replaced: str = "NO",
 ) -> str:
     raw_dir = f".agent/memory/raw/topic-{topic_id}/"
     warn_lines = "\n".join(f"- {w}" for w in warnings) if warnings else "- none"
@@ -354,6 +375,8 @@ def _build_telegram_report(
         f"Role: {role}\n\n"
         f"{telegram_section}\n\n"
         f"{input_section}\n\n"
+        f"Existing raw chunks: {existing_chunks}\n"
+        f"Raw chunks replaced: {chunks_replaced}\n\n"
         f"Archive step: {archive_status}\n"
         f"Compile step: {compile_status}\n\n"
         f"Raw output:\n- {raw_dir}\n\n"
@@ -397,6 +420,18 @@ def refresh(
     lines_read, logical_records, planned_chunks = _count_input(
         input_path, source_type, chunk_size
     )
+
+    # Inspect / clear existing raw chunks
+    raw_dir_path = target / ".agent" / "memory" / "raw" / f"topic-{topic_id}"
+    if write:
+        existing_chunks = _clear_existing_chunks(raw_dir_path)
+        chunks_replaced = "YES" if existing_chunks > 0 else "NO"
+    else:
+        existing_chunks = (
+            len(list(raw_dir_path.glob("chunk-*.md")))
+            if raw_dir_path.exists() else 0
+        )
+        chunks_replaced = "planned" if existing_chunks > 0 else "NO"
 
     # Load scripts lazily (allow injection in tests)
     if _archive_mod is None:
@@ -444,6 +479,8 @@ def refresh(
             logical_records=logical_records,
             planned_chunks=planned_chunks,
             notes_path=notes_path,
+            existing_chunks=existing_chunks,
+            chunks_replaced=chunks_replaced,
         )
 
     # -----------------------------------------------------------------------
@@ -472,6 +509,8 @@ def refresh(
         planned_chunks=planned_chunks,
         notes_path=notes_path,
         raw_chunk_paths=raw_chunk_paths,
+        existing_chunks=existing_chunks,
+        chunks_replaced=chunks_replaced,
     )
 
 
@@ -538,11 +577,18 @@ def refresh_telegram(
 
     # Dry-run: skip Telegram call entirely
     if not write:
+        tg_raw_dir = target / ".agent" / "memory" / "raw" / f"topic-{topic_id}"
+        dry_existing = (
+            len(list(tg_raw_dir.glob("chunk-*.md")))
+            if tg_raw_dir.exists() else 0
+        )
+        dry_replaced = "planned" if dry_existing > 0 else "NO"
         return 0, _build_telegram_report(
             mode=mode, target=target, topic_id=topic_id, role=role,
             chat_id=chat_id, limit=limit,
             archive_status="SKIP", compile_status="SKIP",
             warnings=warnings, planned=True, notes_path=notes_path,
+            existing_chunks=dry_existing, chunks_replaced=dry_replaced,
         )
 
     # --- Write mode: create temp file for transcript ---
@@ -573,12 +619,24 @@ def refresh_telegram(
         read_code = _run_step(_read_topic_mod, read_argv, warnings, "read-topic")
         if read_code != 0:
             tmp_path.unlink(missing_ok=True)
+            # Read failed: existing chunks were NOT touched
+            tg_raw_dir = target / ".agent" / "memory" / "raw" / f"topic-{topic_id}"
+            surviving = (
+                len(list(tg_raw_dir.glob("chunk-*.md")))
+                if tg_raw_dir.exists() else 0
+            )
             return 1, _build_telegram_report(
                 mode=mode, target=target, topic_id=topic_id, role=role,
                 chat_id=chat_id, limit=limit,
                 archive_status="FAIL", compile_status="SKIP",
                 warnings=warnings, notes_path=notes_path,
+                existing_chunks=surviving, chunks_replaced="NO",
             )
+
+        # Read succeeded: safe to clear existing raw chunks now
+        tg_raw_dir = target / ".agent" / "memory" / "raw" / f"topic-{topic_id}"
+        existing_chunks = _clear_existing_chunks(tg_raw_dir)
+        chunks_replaced = "YES" if existing_chunks > 0 else "NO"
 
         # Estimate messages_fetched from non-empty, non-header lines
         try:
@@ -631,6 +689,7 @@ def refresh_telegram(
                 archive_status=archive_status, compile_status="SKIP",
                 warnings=warnings, messages_fetched=messages_fetched,
                 messages_archived=messages_archived, notes_path=notes_path,
+                existing_chunks=existing_chunks, chunks_replaced=chunks_replaced,
             )
 
         # Load compile module
@@ -662,6 +721,7 @@ def refresh_telegram(
             warnings=warnings, messages_fetched=messages_fetched,
             messages_archived=messages_archived, raw_chunk_paths=raw_chunk_paths,
             notes_path=notes_path,
+            existing_chunks=existing_chunks, chunks_replaced=chunks_replaced,
         )
 
     except Exception as exc:
