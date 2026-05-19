@@ -386,17 +386,32 @@ def discover_chat_id(topic_id: str, base: Path) -> "str | None":
 # Pyrogram reader with FloodWait retry
 # ---------------------------------------------------------------------------
 
+# Default safety cap for Telegram history scanning.
+DEFAULT_MAX_SCAN = 10000
+
+
 async def fetch_messages(
     chat_id: int,
     topic_id: int,
-    limit: int,
+    limit: "int | None",
     since_id: "int | None",
     workdir: str,
     session_name: str,
+    *,
+    until_id: "int | None" = None,
+    max_scan: "int | None" = None,
 ) -> list:
-    """Fetch messages from Telegram topic. Returns list of (date, msg_id, sender, text)."""
+    """Fetch messages from Telegram topic. Returns list of (date, msg_id, sender, text).
+
+    Args:
+        limit:    Max messages to *return* (output cap). None means unlimited (bounded by max_scan).
+        max_scan: Max messages to scan from Telegram history. Defaults to DEFAULT_MAX_SCAN.
+                  This is the safety cap on how much chat history we request from the API.
+    """
     from pyrogram import Client
     from pyrogram.errors import FloodWait
+
+    effective_max_scan = max_scan if max_scan is not None else DEFAULT_MAX_SCAN
 
     app = Client(session_name, workdir=workdir)
     messages: list = []
@@ -405,8 +420,7 @@ async def fetch_messages(
     for attempt in range(max_retries):
         try:
             async with app:
-                fetch_limit = min(limit * 4, 10000)  # fetch extra, filter by topic
-                async for msg in app.get_chat_history(chat_id, limit=fetch_limit):
+                async for msg in app.get_chat_history(chat_id, limit=effective_max_scan):
                     thread_id = (
                         getattr(msg, "message_thread_id", None)
                         or getattr(msg, "reply_to_message_id", None)
@@ -419,6 +433,8 @@ async def fetch_messages(
                             continue
 
                     if since_id is not None and msg.id <= since_id:
+                        continue
+                    if until_id is not None and msg.id > until_id:
                         continue
 
                     text = msg.text or msg.caption or ""
@@ -436,7 +452,7 @@ async def fetch_messages(
                         sender = msg.sender_chat.title or "chat"
 
                     messages.append((msg.date, msg.id, sender, text))
-                    if len(messages) >= limit:
+                    if limit is not None and len(messages) >= limit:
                         break
             break  # success
 
@@ -453,6 +469,28 @@ async def fetch_messages(
 
     messages.sort(key=lambda x: x[0])
     return messages
+
+
+def filter_by_date(
+    messages: list,
+    since: "str | None" = None,
+    until: "str | None" = None,
+) -> list:
+    """Filter messages by date range (YYYY-MM-DD). Both bounds are inclusive."""
+    if not since and not until:
+        return messages
+    from datetime import datetime as _dt
+    filtered = messages
+    if since:
+        since_dt = _dt.strptime(since, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        filtered = [m for m in filtered if m[0] >= since_dt]
+    if until:
+        # until is inclusive: include all of that day
+        until_dt = _dt.strptime(until, "%Y-%m-%d").replace(
+            hour=23, minute=59, second=59, tzinfo=timezone.utc
+        )
+        filtered = [m for m in filtered if m[0] <= until_dt]
+    return filtered
 
 
 # ---------------------------------------------------------------------------
@@ -507,8 +545,19 @@ def main(argv=None):
         description="Read Telegram topic history via Pyrogram userbot"
     )
     parser.add_argument("topic", help="Topic ID (numeric) or topic name (e.g. telemost)")
-    parser.add_argument("--limit", type=int, default=500, help="Max messages to fetch (default: 500)")
+    parser.add_argument("--limit", type=int, default=None,
+                        help="Max messages to return/archive (output cap). Default: 500 unless --full.")
     parser.add_argument("--since-id", type=int, default=None, help="Only fetch messages after this message ID")
+    parser.add_argument("--until-id", type=int, default=None, help="Only fetch messages up to this message ID")
+    parser.add_argument("--since", default=None, help="Only fetch messages after YYYY-MM-DD date")
+    parser.add_argument("--until", default=None, help="Only fetch messages before YYYY-MM-DD date")
+    parser.add_argument("--max-scan", type=int, default=None, dest="max_scan",
+                        help=f"Max messages to scan from Telegram history (safety cap). "
+                             f"Default: {DEFAULT_MAX_SCAN}. Must be positive.")
+    parser.add_argument("--full", action="store_true", default=False,
+                        help="Read entire topic history within --max-scan cap (requires --confirm-large-read).")
+    parser.add_argument("--confirm-large-read", action="store_true", default=False, dest="confirm_large_read",
+                        help="Acknowledge that --full may fetch many messages.")
     parser.add_argument("--chat-id", type=str, default=None, help="Override chat_id (skip auto-discovery)")
     parser.add_argument("--batch-format", action="store_true", help="Output structured transcript for write-pipeline")
     parser.add_argument("--sub-batch-size", type=int, default=200,
@@ -534,6 +583,54 @@ def main(argv=None):
     parser.add_argument("--out", default=None,
                         help="Write transcript output to this file instead of stdout.")
     args = parser.parse_args(argv)
+
+    # ── Validate CLI args before any I/O ─────────────────────────────────────
+    if args.limit is not None and args.limit <= 0:
+        raise SystemExit(f"ERROR: --limit must be a positive integer, got {args.limit}")
+    if args.since_id is not None and args.since_id <= 0:
+        raise SystemExit(f"ERROR: --since-id must be a positive integer, got {args.since_id}")
+    if args.until_id is not None and args.until_id <= 0:
+        raise SystemExit(f"ERROR: --until-id must be a positive integer, got {args.until_id}")
+    if args.max_scan is not None and args.max_scan <= 0:
+        raise SystemExit(f"ERROR: --max-scan must be a positive integer, got {args.max_scan}")
+    if args.until_id is not None and args.since_id is None:
+        raise SystemExit("ERROR: --until-id requires --since-id")
+    if args.until is not None and args.since is None:
+        raise SystemExit("ERROR: --until requires --since")
+    if args.since is not None:
+        try:
+            datetime.strptime(args.since, "%Y-%m-%d")
+        except ValueError:
+            raise SystemExit(f"ERROR: --since must be YYYY-MM-DD, got {args.since!r}")
+    if args.until is not None:
+        try:
+            datetime.strptime(args.until, "%Y-%m-%d")
+        except ValueError:
+            raise SystemExit(f"ERROR: --until must be YYYY-MM-DD, got {args.until!r}")
+    if args.full and not args.confirm_large_read:
+        raise SystemExit("ERROR: --full requires --confirm-large-read")
+    if args.full and any([
+        args.limit is not None,
+        args.since_id is not None,
+        args.until_id is not None,
+        args.since is not None,
+        args.until is not None,
+    ]):
+        raise SystemExit(
+            "ERROR: --full cannot be combined with --limit, --since-id, --until-id, "
+            "--since, or --until"
+        )
+    if args.limit is not None and args.since_id is not None:
+        raise SystemExit(
+            "ERROR: --limit and --since-id are ambiguous together; "
+            "use --since-id alone (with --max-scan for scan cap, not --limit)"
+        )
+    if args.limit is not None and args.since is not None:
+        raise SystemExit(
+            "ERROR: --limit and --since are ambiguous together; "
+            "use --since alone (with --max-scan for scan cap, not --limit)"
+        )
+    # ── End validation ────────────────────────────────────────────────────────
 
     # Load config first (used as fallback in all resolver functions)
     cfg = load_agent_config(config_path=args.config)
@@ -579,8 +676,13 @@ def main(argv=None):
     # 4. locate session file
     workdir, session_name = find_session_file(args.session_file, _config=cfg)
 
+    # Resolve effective limit: --full means no output cap (None), otherwise default 500
+    effective_limit = None if args.full else (args.limit if args.limit is not None else 500)
+
     print(
-        f"[read-topic] chat={chat_id_int} topic={topic_id_int} limit={args.limit} since_id={args.since_id}",
+        f"[read-topic] chat={chat_id_int} topic={topic_id_int} limit={effective_limit} "
+        f"since_id={args.since_id} until_id={getattr(args, 'until_id', None)} "
+        f"max_scan={args.max_scan or DEFAULT_MAX_SCAN} full={args.full}",
         file=sys.stderr,
     )
 
@@ -589,12 +691,20 @@ def main(argv=None):
         fetch_messages(
             chat_id=chat_id_int,
             topic_id=topic_id_int,
-            limit=args.limit,
+            limit=effective_limit,
             since_id=args.since_id,
             workdir=workdir,
             session_name=session_name,
+            until_id=getattr(args, "until_id", None),
+            max_scan=args.max_scan,
         )
     )
+
+    # 5b. post-fetch date filtering
+    since_date = getattr(args, "since", None)
+    until_date = getattr(args, "until", None)
+    if since_date or until_date:
+        messages = filter_by_date(messages, since=since_date, until=until_date)
 
     # 6. sub-batch split + checkpoint
     sub = args.sub_batch_size

@@ -694,24 +694,6 @@ class TestRefreshTelegram(unittest.TestCase):
         with self.assertRaises(SystemExit):
             p.parse_args(["--target", "/t", "--topic", "7301:coder", "--topics", "7301:coder"])
 
-    def test_no_full_flag(self):
-        """No --full flag exists in refresh-memory CLI."""
-        p = rm.build_parser()
-        with self.assertRaises(SystemExit):
-            p.parse_args(["--target", "/t", "--topic", "7301:coder", "--full"])
-
-    def test_no_since_flag(self):
-        """No --since flag exists in refresh-memory CLI."""
-        p = rm.build_parser()
-        with self.assertRaises(SystemExit):
-            p.parse_args(["--target", "/t", "--topic", "7301:coder", "--since", "123"])
-
-    def test_no_until_flag(self):
-        """No --until flag exists in refresh-memory CLI."""
-        p = rm.build_parser()
-        with self.assertRaises(SystemExit):
-            p.parse_args(["--target", "/t", "--topic", "7301:coder", "--until", "123"])
-
     def test_messages_archived_equals_messages_fetched(self):
         """messages_archived in report must equal messages_fetched, not chunk count."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -751,6 +733,327 @@ class TestRefreshTelegram(unittest.TestCase):
             self.assertIn("messages archived: 5", report)
             # raw chunks written should show 1, not 5
             self.assertIn("raw chunks written: 1", report)
+
+
+# ---------------------------------------------------------------------------
+# TestReadRangeParams (PR47)
+# ---------------------------------------------------------------------------
+
+class TestReadRangeParams(unittest.TestCase):
+    """PR47: bounded Telegram read parameters for --read-topic."""
+
+    _BASE_ARGV = ["--target", "/t", "--topic", "7301:coder", "--read-topic", "--chat-id", "-123"]
+
+    def _make_read_topic_mock(self, code: int = 0):
+        def fake_main(argv=None):
+            argv = list(argv or [])
+            for i, a in enumerate(argv):
+                if a == "--out" and i + 1 < len(argv):
+                    Path(argv[i + 1]).write_text("msg line\n", encoding="utf-8")
+            return code
+        return types.SimpleNamespace(main=fake_main)
+
+    def _capturing_read_topic_mock(self):
+        """Mock that captures the argv passed to read-topic.main()."""
+        captured: List[List[str]] = []
+        def fake_main(argv=None):
+            argv = list(argv or [])
+            captured.append(argv)
+            for i, a in enumerate(argv):
+                if a == "--out" and i + 1 < len(argv):
+                    Path(argv[i + 1]).write_text("msg line\n", encoding="utf-8")
+            return 0
+        return types.SimpleNamespace(main=fake_main), captured
+
+    # 1. existing --limit mode still works
+    def test_limit_mode_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            code, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=False, limit=100,
+            )
+            self.assertEqual(code, 0)
+            self.assertIn("mode: limit", report)
+
+    # 2. --since-id works
+    def test_since_id_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            code, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=False, since_id=15000,
+            )
+            self.assertEqual(code, 0)
+            self.assertIn("mode: since-id", report)
+            self.assertIn("since-id: 15000", report)
+
+    # 3. --since-id + --until-id works
+    def test_since_id_until_id_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            code, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=False, since_id=15000, until_id=16000,
+            )
+            self.assertEqual(code, 0)
+            self.assertIn("mode: message-id-range", report)
+            self.assertIn("since-id: 15000", report)
+            self.assertIn("until-id: 16000", report)
+
+    # 4. --until-id without --since-id fails (no selector → error)
+    def test_until_id_without_since_id_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--until-id", "16000"])
+        self.assertEqual(code, 1)
+
+    # 5. --since works
+    def test_since_date_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            code, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=False, since="2026-05-01",
+            )
+            self.assertEqual(code, 0)
+            self.assertIn("mode: since-date", report)
+            self.assertIn("since: 2026-05-01", report)
+
+    # 6. --since + --until works
+    def test_since_until_date_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            code, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=False, since="2026-05-01", until="2026-05-15",
+            )
+            self.assertEqual(code, 0)
+            self.assertIn("mode: date-range", report)
+            self.assertIn("since: 2026-05-01", report)
+            self.assertIn("until: 2026-05-15", report)
+
+    # 7. --until without --since fails
+    def test_until_without_since_fails(self):
+        # --until alone is not a selector, fails at "no selector" check
+        code = rm.main(self._BASE_ARGV + ["--until", "2026-05-15"])
+        self.assertEqual(code, 1)
+
+    # 8. --full without --confirm-large-read fails
+    def test_full_without_confirm_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--full"])
+        self.assertEqual(code, 1)
+
+    # 9. --full --confirm-large-read works
+    def test_full_with_confirm_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            code, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=False, full=True,
+            )
+            self.assertEqual(code, 0)
+            self.assertIn("mode: full", report)
+
+    # 10. --full combined with other selectors fails
+    def test_full_combined_with_limit_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--full", "--confirm-large-read", "--limit", "100"])
+        self.assertEqual(code, 1)
+
+    def test_full_combined_with_since_id_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--full", "--confirm-large-read", "--since-id", "100"])
+        self.assertEqual(code, 1)
+
+    def test_full_combined_with_since_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--full", "--confirm-large-read", "--since", "2026-05-01"])
+        self.assertEqual(code, 1)
+
+    # 11. no selector fails
+    def test_no_selector_fails(self):
+        code = rm.main(self._BASE_ARGV)
+        self.assertEqual(code, 1)
+
+    # 12. --topics unsupported (argparse rejects it)
+    def test_topics_unsupported(self):
+        p = rm.build_parser()
+        with self.assertRaises(SystemExit):
+            p.parse_args(["--target", "/t", "--topic", "7301:coder", "--topics", "7301:coder"])
+
+    # 13. dry-run writes nothing
+    def test_dry_run_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            code, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=False, limit=100,
+            )
+            self.assertEqual(code, 0)
+            self.assertIn("Files written:\n- none", report)
+            mem_dir = target / ".agent" / "memory"
+            self.assertFalse(mem_dir.exists())
+
+    # 14. write mode still replaces existing chunks safely
+    def test_write_replaces_existing_chunks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            raw_dir = target / ".agent" / "memory" / "raw" / "topic-7301"
+            raw_dir.mkdir(parents=True)
+            (raw_dir / "chunk-0001.md").write_text("old", encoding="utf-8")
+            (raw_dir / "chunk-0002.md").write_text("old", encoding="utf-8")
+
+            def fake_archive(argv=None):
+                argv = list(argv or [])
+                t_idx = argv.index("--target") + 1 if "--target" in argv else None
+                tid_idx = argv.index("--topic") + 1 if "--topic" in argv else None
+                if t_idx and tid_idx:
+                    rd = Path(argv[t_idx]) / ".agent" / "memory" / "raw" / f"topic-{argv[tid_idx]}"
+                    rd.mkdir(parents=True, exist_ok=True)
+                    (rd / "chunk-0001.md").write_text("new", encoding="utf-8")
+                return 0
+
+            code, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=True, limit=50,
+                _read_topic_mod=self._make_read_topic_mock(),
+                _archive_mod=types.SimpleNamespace(main=fake_archive),
+                _compile_mod=_mock_mod(0),
+            )
+            self.assertEqual(code, 0)
+            self.assertIn("Raw chunks replaced: YES", report)
+            # Old chunk-0002 should be gone
+            self.assertFalse((raw_dir / "chunk-0002.md").exists())
+
+    # 15. report includes read mode and selected params
+    def test_report_includes_read_mode_and_params(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            _, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=False, since_id=15000, until_id=16000,
+            )
+            self.assertIn("Telegram read:", report)
+            self.assertIn("mode: message-id-range", report)
+            self.assertIn("chat id: -123", report)
+            self.assertIn("topic id: 7301", report)
+            self.assertIn("since-id: 15000", report)
+            self.assertIn("until-id: 16000", report)
+
+    # --- PR47 fix: argv forwarding tests ---
+
+    def test_full_write_forwards_full_confirm_max_scan(self):
+        """write=True, full=True passes --full --confirm-large-read --max-scan to read-topic."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            rt_mock, captured = self._capturing_read_topic_mock()
+            rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=True, full=True, max_scan=5000,
+                _read_topic_mod=rt_mock,
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            self.assertTrue(len(captured) >= 1)
+            argv = captured[0]
+            self.assertIn("--full", argv)
+            self.assertIn("--confirm-large-read", argv)
+            self.assertIn("--max-scan", argv)
+            ms_idx = argv.index("--max-scan")
+            self.assertEqual(argv[ms_idx + 1], "5000")
+
+    def test_since_id_until_id_write_forwards_argv(self):
+        """write=True, since-id/until-id passes --since-id/--until-id to read-topic."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            rt_mock, captured = self._capturing_read_topic_mock()
+            rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=True, since_id=15000, until_id=16000,
+                _read_topic_mod=rt_mock,
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            argv = captured[0]
+            self.assertIn("--since-id", argv)
+            si_idx = argv.index("--since-id")
+            self.assertEqual(argv[si_idx + 1], "15000")
+            self.assertIn("--until-id", argv)
+            ui_idx = argv.index("--until-id")
+            self.assertEqual(argv[ui_idx + 1], "16000")
+
+    def test_since_until_write_forwards_argv(self):
+        """write=True, since/until passes --since/--until to read-topic."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            rt_mock, captured = self._capturing_read_topic_mock()
+            rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=True, since="2026-05-01", until="2026-05-15",
+                _read_topic_mod=rt_mock,
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            argv = captured[0]
+            self.assertIn("--since", argv)
+            s_idx = argv.index("--since")
+            self.assertEqual(argv[s_idx + 1], "2026-05-01")
+            self.assertIn("--until", argv)
+            u_idx = argv.index("--until")
+            self.assertEqual(argv[u_idx + 1], "2026-05-15")
+
+    # --- Validation edge cases ---
+
+    def test_invalid_since_date_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--since", "not-a-date"])
+        self.assertEqual(code, 1)
+
+    def test_invalid_until_date_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--since", "2026-05-01", "--until", "bad"])
+        self.assertEqual(code, 1)
+
+    def test_zero_limit_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--limit", "0"])
+        self.assertEqual(code, 1)
+
+    def test_negative_since_id_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--since-id", "-1"])
+        self.assertEqual(code, 1)
+
+    def test_zero_until_id_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--since-id", "100", "--until-id", "0"])
+        self.assertEqual(code, 1)
+
+    def test_zero_max_scan_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--limit", "100", "--max-scan", "0"])
+        self.assertEqual(code, 1)
+
+    def test_negative_max_scan_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--limit", "100", "--max-scan", "-5"])
+        self.assertEqual(code, 1)
+
+    # --- Ambiguous combos ---
+
+    def test_limit_plus_since_id_ambiguous_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--limit", "100", "--since-id", "15000"])
+        self.assertEqual(code, 1)
+
+    def test_limit_plus_since_ambiguous_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--limit", "100", "--since", "2026-05-01"])
+        self.assertEqual(code, 1)
+
+    # --- Report includes max-scan ---
+
+    def test_report_includes_max_scan_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            _, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=False, limit=100,
+            )
+            self.assertIn("max-scan: 10000", report)
+
+    def test_report_includes_max_scan_custom(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            _, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=False, limit=100, max_scan=5000,
+            )
+            self.assertIn("max-scan: 5000", report)
 
 
 # ---------------------------------------------------------------------------

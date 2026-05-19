@@ -62,14 +62,45 @@ python3 "$PME_REPO/scripts/refresh-memory.py" \
 
 **Telegram bounded read** (explicit operator request only):
 ```bash
+# By message count
 python3 "$PME_REPO/scripts/refresh-memory.py" \
   --target "$PROJECTS_ROOT/<project-dir>" \
   --topic <TOPIC_ID>:<ROLE> \
-  --read-topic \
-  --chat-id <chat-id> \
-  --limit 200 \
-  --write
+  --read-topic --chat-id <chat-id> \
+  --limit 200 --write
+
+# By message ID range
+python3 "$PME_REPO/scripts/refresh-memory.py" \
+  --target "$PROJECTS_ROOT/<project-dir>" \
+  --topic <TOPIC_ID>:<ROLE> \
+  --read-topic --chat-id <chat-id> \
+  --since-id 15000 --until-id 16000 --write
+
+# By date range
+python3 "$PME_REPO/scripts/refresh-memory.py" \
+  --target "$PROJECTS_ROOT/<project-dir>" \
+  --topic <TOPIC_ID>:<ROLE> \
+  --read-topic --chat-id <chat-id> \
+  --since 2026-05-01 --until 2026-05-15 --write
+
+# Full topic (requires confirmation; capped by --max-scan, default 10000)
+python3 "$PME_REPO/scripts/refresh-memory.py" \
+  --target "$PROJECTS_ROOT/<project-dir>" \
+  --topic <TOPIC_ID>:<ROLE> \
+  --read-topic --chat-id <chat-id> \
+  --full --confirm-large-read --write
+
+# Full topic with higher scan cap for deep history
+python3 "$PME_REPO/scripts/refresh-memory.py" \
+  --target "$PROJECTS_ROOT/<project-dir>" \
+  --topic <TOPIC_ID>:<ROLE> \
+  --read-topic --chat-id <chat-id> \
+  --full --confirm-large-read --max-scan 50000 --write
 ```
+
+> **--limit vs --max-scan:** `--limit` caps messages returned/archived. `--max-scan` caps
+> how many messages are scanned from Telegram chat history (default: 10000). `--full` removes
+> the output cap but still respects `--max-scan`.
 
 Review the report. Archive step must show `PASS`.
 
