@@ -601,18 +601,30 @@ class TestFilterByDate(unittest.TestCase):
         result = rt.filter_by_date(msgs, since="2026-05-01", until="2026-05-15")
         self.assertEqual(len(result), 1)
 
+    def test_until_includes_end_of_day(self):
+        """until=2026-05-10 includes messages at 23:59:59 UTC on that day."""
+        from datetime import datetime, timezone
+        late_msg = (
+            datetime(2026, 5, 10, 23, 59, 59, tzinfo=timezone.utc),
+            1, "user", "late msg"
+        )
+        next_day = (
+            datetime(2026, 5, 11, 0, 0, 1, tzinfo=timezone.utc),
+            2, "user", "next day"
+        )
+        result = rt.filter_by_date([late_msg, next_day], until="2026-05-10")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][3], "late msg")
+
 
 class TestNewCliArgs(unittest.TestCase):
-    """read-topic.py parser accepts --until-id, --since, --until."""
-
-    def _parser(self):
-        import argparse
-        # Re-parse main() argparse by calling it indirectly
-        # Just verify the module-level attributes exist
-        self.assertTrue(hasattr(rt, 'filter_by_date'))
+    """read-topic.py has new args and constants for PR47."""
 
     def test_has_filter_by_date(self):
         self.assertTrue(callable(rt.filter_by_date))
+
+    def test_has_default_max_scan(self):
+        self.assertEqual(rt.DEFAULT_MAX_SCAN, 10000)
 
 
 if __name__ == "__main__":

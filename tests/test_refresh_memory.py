@@ -753,6 +753,18 @@ class TestReadRangeParams(unittest.TestCase):
             return code
         return types.SimpleNamespace(main=fake_main)
 
+    def _capturing_read_topic_mock(self):
+        """Mock that captures the argv passed to read-topic.main()."""
+        captured: List[List[str]] = []
+        def fake_main(argv=None):
+            argv = list(argv or [])
+            captured.append(argv)
+            for i, a in enumerate(argv):
+                if a == "--out" and i + 1 < len(argv):
+                    Path(argv[i + 1]).write_text("msg line\n", encoding="utf-8")
+            return 0
+        return types.SimpleNamespace(main=fake_main), captured
+
     # 1. existing --limit mode still works
     def test_limit_mode_works(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -789,9 +801,9 @@ class TestReadRangeParams(unittest.TestCase):
             self.assertIn("since-id: 15000", report)
             self.assertIn("until-id: 16000", report)
 
-    # 4. --until-id without --since-id fails
+    # 4. --until-id without --since-id fails (no selector → error)
     def test_until_id_without_since_id_fails(self):
-        code = rm.main(self._BASE_ARGV + ["--until-id", "16000", "--limit", "100"])
+        code = rm.main(self._BASE_ARGV + ["--until-id", "16000"])
         self.assertEqual(code, 1)
 
     # 5. --since works
@@ -821,7 +833,8 @@ class TestReadRangeParams(unittest.TestCase):
 
     # 7. --until without --since fails
     def test_until_without_since_fails(self):
-        code = rm.main(self._BASE_ARGV + ["--until", "2026-05-15", "--limit", "100"])
+        # --until alone is not a selector, fails at "no selector" check
+        code = rm.main(self._BASE_ARGV + ["--until", "2026-05-15"])
         self.assertEqual(code, 1)
 
     # 8. --full without --confirm-large-read fails
@@ -922,6 +935,125 @@ class TestReadRangeParams(unittest.TestCase):
             self.assertIn("topic id: 7301", report)
             self.assertIn("since-id: 15000", report)
             self.assertIn("until-id: 16000", report)
+
+    # --- PR47 fix: argv forwarding tests ---
+
+    def test_full_write_forwards_full_confirm_max_scan(self):
+        """write=True, full=True passes --full --confirm-large-read --max-scan to read-topic."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            rt_mock, captured = self._capturing_read_topic_mock()
+            rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=True, full=True, max_scan=5000,
+                _read_topic_mod=rt_mock,
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            self.assertTrue(len(captured) >= 1)
+            argv = captured[0]
+            self.assertIn("--full", argv)
+            self.assertIn("--confirm-large-read", argv)
+            self.assertIn("--max-scan", argv)
+            ms_idx = argv.index("--max-scan")
+            self.assertEqual(argv[ms_idx + 1], "5000")
+
+    def test_since_id_until_id_write_forwards_argv(self):
+        """write=True, since-id/until-id passes --since-id/--until-id to read-topic."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            rt_mock, captured = self._capturing_read_topic_mock()
+            rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=True, since_id=15000, until_id=16000,
+                _read_topic_mod=rt_mock,
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            argv = captured[0]
+            self.assertIn("--since-id", argv)
+            si_idx = argv.index("--since-id")
+            self.assertEqual(argv[si_idx + 1], "15000")
+            self.assertIn("--until-id", argv)
+            ui_idx = argv.index("--until-id")
+            self.assertEqual(argv[ui_idx + 1], "16000")
+
+    def test_since_until_write_forwards_argv(self):
+        """write=True, since/until passes --since/--until to read-topic."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            rt_mock, captured = self._capturing_read_topic_mock()
+            rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=True, since="2026-05-01", until="2026-05-15",
+                _read_topic_mod=rt_mock,
+                _archive_mod=_mock_mod(0), _compile_mod=_mock_mod(0),
+            )
+            argv = captured[0]
+            self.assertIn("--since", argv)
+            s_idx = argv.index("--since")
+            self.assertEqual(argv[s_idx + 1], "2026-05-01")
+            self.assertIn("--until", argv)
+            u_idx = argv.index("--until")
+            self.assertEqual(argv[u_idx + 1], "2026-05-15")
+
+    # --- Validation edge cases ---
+
+    def test_invalid_since_date_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--since", "not-a-date"])
+        self.assertEqual(code, 1)
+
+    def test_invalid_until_date_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--since", "2026-05-01", "--until", "bad"])
+        self.assertEqual(code, 1)
+
+    def test_zero_limit_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--limit", "0"])
+        self.assertEqual(code, 1)
+
+    def test_negative_since_id_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--since-id", "-1"])
+        self.assertEqual(code, 1)
+
+    def test_zero_until_id_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--since-id", "100", "--until-id", "0"])
+        self.assertEqual(code, 1)
+
+    def test_zero_max_scan_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--limit", "100", "--max-scan", "0"])
+        self.assertEqual(code, 1)
+
+    def test_negative_max_scan_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--limit", "100", "--max-scan", "-5"])
+        self.assertEqual(code, 1)
+
+    # --- Ambiguous combos ---
+
+    def test_limit_plus_since_id_ambiguous_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--limit", "100", "--since-id", "15000"])
+        self.assertEqual(code, 1)
+
+    def test_limit_plus_since_ambiguous_fails(self):
+        code = rm.main(self._BASE_ARGV + ["--limit", "100", "--since", "2026-05-01"])
+        self.assertEqual(code, 1)
+
+    # --- Report includes max-scan ---
+
+    def test_report_includes_max_scan_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            _, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=False, limit=100,
+            )
+            self.assertIn("max-scan: 10000", report)
+
+    def test_report_includes_max_scan_custom(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = _make_target(Path(tmp))
+            _, report = rm.refresh_telegram(
+                target=target, topic_id="7301", role="coder",
+                chat_id="-123", write=False, limit=100, max_scan=5000,
+            )
+            self.assertIn("max-scan: 5000", report)
 
 
 # ---------------------------------------------------------------------------

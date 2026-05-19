@@ -328,6 +328,7 @@ def _build_telegram_report(
     until_id: Optional[int] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
+    max_scan: Optional[int] = None,
     messages_fetched: Optional[int] = None,
     messages_archived: Optional[int] = None,
     planned: bool = False,
@@ -360,6 +361,7 @@ def _build_telegram_report(
         tg_lines.append(f"- since: {since}")
     if until is not None:
         tg_lines.append(f"- until: {until}")
+    tg_lines.append(f"- max-scan: {max_scan if max_scan is not None else 10000}")
     tg_lines.append(f"- messages fetched: {fetched_str}")
     tg_lines.append(f"- messages archived: {archived_str}")
     tg_lines.append(f"- temporary export: {export_str}")
@@ -631,6 +633,7 @@ def refresh_telegram(
     since: Optional[str] = None,
     until: Optional[str] = None,
     full: bool = False,
+    max_scan: Optional[int] = None,
     # Injectable for testing
     _read_topic_mod=None,
     _archive_mod=None,
@@ -651,6 +654,7 @@ def refresh_telegram(
     _report_kw = dict(
         read_mode=read_mode, limit=limit, since_id=since_id,
         until_id=until_id, since=since, until=until,
+        max_scan=max_scan,
     )
 
     # Dry-run: skip Telegram call entirely
@@ -704,6 +708,10 @@ def refresh_telegram(
             read_argv += ["--since", since]
         if until is not None:
             read_argv += ["--until", until]
+        if max_scan is not None:
+            read_argv += ["--max-scan", str(max_scan)]
+        if full:
+            read_argv += ["--full", "--confirm-large-read"]
         read_code = _run_step(_read_topic_mod, read_argv, warnings, "read-topic")
         if read_code != 0:
             tmp_path.unlink(missing_ok=True)
@@ -908,6 +916,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Acknowledge that --full may fetch many messages.",
     )
     p.add_argument(
+        "--max-scan", type=int, default=None, dest="max_scan",
+        help="Max messages to scan from Telegram history (safety cap, default: 10000). Must be positive.",
+    )
+    p.add_argument(
         "--notes", default=None,
         help="Optional path to operator notes file.",
     )
@@ -998,6 +1010,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print("ERROR: --full cannot be combined with --limit, --since-id, --until-id, --since, or --until")
                 return 1
 
+        # Reject ambiguous combos: --limit + --since-id, --limit + --since
+        if has_limit and has_since_id:
+            print("ERROR: --limit and --since-id are ambiguous; use one selector mode")
+            return 1
+        if has_limit and has_since:
+            print("ERROR: --limit and --since are ambiguous; use one selector mode")
+            return 1
+
         # --limit must be positive
         if has_limit and args.limit <= 0:
             print(f"ERROR: --limit must be a positive integer, got {args.limit}")
@@ -1009,6 +1029,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 1
         if has_until_id and args.until_id <= 0:
             print(f"ERROR: --until-id must be a positive integer, got {args.until_id}")
+            return 1
+
+        # --max-scan must be positive
+        if args.max_scan is not None and args.max_scan <= 0:
+            print(f"ERROR: --max-scan must be a positive integer, got {args.max_scan}")
             return 1
 
         # --until-id requires --since-id
@@ -1062,6 +1087,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             since=args.since,
             until=args.until,
             full=args.full,
+            max_scan=args.max_scan,
         )
         print(report)
         return exit_code
