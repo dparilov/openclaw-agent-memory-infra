@@ -133,4 +133,4 @@ Context loaded: <yes/no>
 Review target: <PR number or branch>
 ```
 
-Then begin the review.
+Then read `.agent/handoffs/ACTIVE.md` if it exists and follow the [Active Handoff Protocol](../agent-collaboration/ACTIVE_HANDOFF_PROTOCOL.md). If no handoff file exists, begin the review directly.
