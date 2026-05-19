@@ -39,6 +39,33 @@ Usage (Telegram mode, write):
         --limit 200 \\
         --write
 
+Usage (Telegram mode, message-ID range):
+    python3 scripts/refresh-memory.py \\
+        --target /path/to/project \\
+        --topic 7301:coder \\
+        --read-topic \\
+        --chat-id -1003596522926 \\
+        --since-id 15000 --until-id 16000 \\
+        --write
+
+Usage (Telegram mode, date range):
+    python3 scripts/refresh-memory.py \\
+        --target /path/to/project \\
+        --topic 7301:coder \\
+        --read-topic \\
+        --chat-id -1003596522926 \\
+        --since 2026-05-01 --until 2026-05-15 \\
+        --write
+
+Usage (Telegram mode, full read):
+    python3 scripts/refresh-memory.py \\
+        --target /path/to/project \\
+        --topic 7301:coder \\
+        --read-topic \\
+        --chat-id -1003596522926 \\
+        --full --confirm-large-read \\
+        --write
+
 Exit codes:
     0  — both steps succeeded (or dry-run succeeded)
     1  — validation error, archive step failed, or compile step failed
@@ -291,11 +318,16 @@ def _build_telegram_report(
     topic_id: str,
     role: str,
     chat_id: str,
-    limit: int,
     archive_status: str,
     compile_status: str,
     warnings: List[str],
     *,
+    read_mode: str = "limit",
+    limit: Optional[int] = None,
+    since_id: Optional[int] = None,
+    until_id: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
     messages_fetched: Optional[int] = None,
     messages_archived: Optional[int] = None,
     planned: bool = False,
@@ -312,15 +344,26 @@ def _build_telegram_report(
     archived_str = str(messages_archived) if messages_archived is not None else "unknown"
     export_str = "planned (dry-run)" if planned else "deleted"
 
-    telegram_section = (
-        "Telegram read:\n"
-        f"- chat id: {chat_id}\n"
-        f"- topic id: {topic_id}\n"
-        f"- limit: {limit}\n"
-        f"- messages fetched: {fetched_str}\n"
-        f"- messages archived: {archived_str}\n"
-        f"- temporary export: {export_str}"
-    )
+    tg_lines = [
+        "Telegram read:",
+        f"- mode: {read_mode}",
+        f"- chat id: {chat_id}",
+        f"- topic id: {topic_id}",
+    ]
+    if limit is not None:
+        tg_lines.append(f"- limit: {limit}")
+    if since_id is not None:
+        tg_lines.append(f"- since-id: {since_id}")
+    if until_id is not None:
+        tg_lines.append(f"- until-id: {until_id}")
+    if since is not None:
+        tg_lines.append(f"- since: {since}")
+    if until is not None:
+        tg_lines.append(f"- until: {until}")
+    tg_lines.append(f"- messages fetched: {fetched_str}")
+    tg_lines.append(f"- messages archived: {archived_str}")
+    tg_lines.append(f"- temporary export: {export_str}")
+    telegram_section = "\n".join(tg_lines)
 
     chunks_written = len(raw_chunk_paths) if raw_chunk_paths else 0
     if planned:
@@ -363,9 +406,9 @@ def _build_telegram_report(
     )
 
     if planned:
-        tg_note = f"- Telegram read: planned (dry-run, --limit {limit} would be used)."
+        tg_note = f"- Telegram read: planned (dry-run, mode={read_mode})."
     else:
-        tg_note = f"- Telegram read performed via read-topic.py with --limit {limit}."
+        tg_note = f"- Telegram read performed via read-topic.py (mode={read_mode})."
 
     return (
         "REFRESH MEMORY REPORT\n\n"
@@ -551,15 +594,43 @@ def _parse_message_count(transcript_text: str) -> Optional[int]:
     return count if count > 0 else None
 
 
+def _detect_read_mode(
+    limit: Optional[int],
+    since_id: Optional[int],
+    until_id: Optional[int],
+    since: Optional[str],
+    until: Optional[str],
+    full: bool,
+) -> str:
+    """Determine the read mode from the supplied flags."""
+    if full:
+        return "full"
+    if since is not None and until is not None:
+        return "date-range"
+    if since is not None:
+        return "since-date"
+    if since_id is not None and until_id is not None:
+        return "message-id-range"
+    if since_id is not None:
+        return "since-id"
+    return "limit"
+
+
 def refresh_telegram(
     target: Path,
     topic_id: str,
     role: str,
     chat_id: str,
-    limit: int,
     write: bool = False,
     notes_path: Optional[Path] = None,
     chunk_size: int = 200,
+    *,
+    limit: Optional[int] = None,
+    since_id: Optional[int] = None,
+    until_id: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    full: bool = False,
     # Injectable for testing
     _read_topic_mod=None,
     _archive_mod=None,
@@ -574,6 +645,13 @@ def refresh_telegram(
 
     mode = "write" if write else "dry-run"
     warnings: List[str] = []
+    read_mode = _detect_read_mode(limit, since_id, until_id, since, until, full)
+
+    # Common kwargs for _build_telegram_report
+    _report_kw = dict(
+        read_mode=read_mode, limit=limit, since_id=since_id,
+        until_id=until_id, since=since, until=until,
+    )
 
     # Dry-run: skip Telegram call entirely
     if not write:
@@ -585,10 +663,11 @@ def refresh_telegram(
         dry_replaced = "planned" if dry_existing > 0 else "NO"
         return 0, _build_telegram_report(
             mode=mode, target=target, topic_id=topic_id, role=role,
-            chat_id=chat_id, limit=limit,
+            chat_id=chat_id,
             archive_status="SKIP", compile_status="SKIP",
             warnings=warnings, planned=True, notes_path=notes_path,
             existing_chunks=dry_existing, chunks_replaced=dry_replaced,
+            **_report_kw,
         )
 
     # --- Write mode: create temp file for transcript ---
@@ -613,9 +692,18 @@ def refresh_telegram(
         read_argv: List[str] = [
             str(topic_id),
             "--chat-id", chat_id,
-            "--limit", str(limit),
             "--out", str(tmp_path),
         ]
+        if limit is not None:
+            read_argv += ["--limit", str(limit)]
+        if since_id is not None:
+            read_argv += ["--since-id", str(since_id)]
+        if until_id is not None:
+            read_argv += ["--until-id", str(until_id)]
+        if since is not None:
+            read_argv += ["--since", since]
+        if until is not None:
+            read_argv += ["--until", until]
         read_code = _run_step(_read_topic_mod, read_argv, warnings, "read-topic")
         if read_code != 0:
             tmp_path.unlink(missing_ok=True)
@@ -627,10 +715,11 @@ def refresh_telegram(
             )
             return 1, _build_telegram_report(
                 mode=mode, target=target, topic_id=topic_id, role=role,
-                chat_id=chat_id, limit=limit,
+                chat_id=chat_id,
                 archive_status="FAIL", compile_status="SKIP",
                 warnings=warnings, notes_path=notes_path,
                 existing_chunks=surviving, chunks_replaced="NO",
+                **_report_kw,
             )
 
         # Read succeeded: safe to clear existing raw chunks now
@@ -685,11 +774,12 @@ def refresh_telegram(
         if archive_code != 0:
             return 1, _build_telegram_report(
                 mode=mode, target=target, topic_id=topic_id, role=role,
-                chat_id=chat_id, limit=limit,
+                chat_id=chat_id,
                 archive_status=archive_status, compile_status="SKIP",
                 warnings=warnings, messages_fetched=messages_fetched,
                 messages_archived=messages_archived, notes_path=notes_path,
                 existing_chunks=existing_chunks, chunks_replaced=chunks_replaced,
+                **_report_kw,
             )
 
         # Load compile module
@@ -716,12 +806,13 @@ def refresh_telegram(
         exit_code = 0 if compile_code == 0 else 1
         return exit_code, _build_telegram_report(
             mode=mode, target=target, topic_id=topic_id, role=role,
-            chat_id=chat_id, limit=limit,
+            chat_id=chat_id,
             archive_status=archive_status, compile_status=compile_status,
             warnings=warnings, messages_fetched=messages_fetched,
             messages_archived=messages_archived, raw_chunk_paths=raw_chunk_paths,
             notes_path=notes_path,
             existing_chunks=existing_chunks, chunks_replaced=chunks_replaced,
+            **_report_kw,
         )
 
     except Exception as exc:
@@ -732,9 +823,10 @@ def refresh_telegram(
         warnings.append(f"unexpected exception: {exc}")
         return 1, _build_telegram_report(
             mode=mode, target=target, topic_id=topic_id, role=role,
-            chat_id=chat_id, limit=limit,
+            chat_id=chat_id,
             archive_status="FAIL", compile_status="SKIP",
             warnings=warnings, notes_path=notes_path,
+            **_report_kw,
         )
 
 
@@ -789,7 +881,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--limit", type=int, default=None,
-        help="Max messages to fetch (required with --read-topic; must be positive).",
+        help="Max messages to fetch (Telegram mode; must be positive).",
+    )
+    p.add_argument(
+        "--since-id", type=int, default=None, dest="since_id",
+        help="Only fetch messages after this message ID (must be positive).",
+    )
+    p.add_argument(
+        "--until-id", type=int, default=None, dest="until_id",
+        help="Only fetch messages up to this message ID (requires --since-id; must be positive).",
+    )
+    p.add_argument(
+        "--since", default=None,
+        help="Only fetch messages after this date (YYYY-MM-DD).",
+    )
+    p.add_argument(
+        "--until", default=None,
+        help="Only fetch messages before this date (YYYY-MM-DD; requires --since).",
+    )
+    p.add_argument(
+        "--full", action="store_true", default=False,
+        help="Read entire topic history (requires --confirm-large-read).",
+    )
+    p.add_argument(
+        "--confirm-large-read", action="store_true", default=False, dest="confirm_large_read",
+        help="Acknowledge that --full may fetch many messages.",
     )
     p.add_argument(
         "--notes", default=None,
@@ -808,6 +924,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Explicit dry-run (default behaviour).",
     )
     return p
+
+
+def _parse_date(s: str) -> str:
+    """Validate YYYY-MM-DD format and return the string. Raises ValueError."""
+    from datetime import datetime as _dt
+    _dt.strptime(s, "%Y-%m-%d")
+    return s
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -845,12 +968,72 @@ def main(argv: Optional[List[str]] = None) -> int:
         if not args.chat_id:
             print("ERROR: --read-topic requires --chat-id")
             return 1
-        if args.limit is None:
-            print("ERROR: --read-topic requires --limit")
+
+        # --topics unsupported
+        if hasattr(args, "topics") and args.topics:
+            print("ERROR: --topics is not supported; use --topic for single-topic mode")
             return 1
-        if args.limit <= 0:
+
+        # Selector validation: at least one required
+        has_limit = args.limit is not None
+        has_since_id = args.since_id is not None
+        has_until_id = args.until_id is not None
+        has_since = args.since is not None
+        has_until = args.until is not None
+        has_full = args.full
+
+        if not (has_limit or has_since_id or has_since or has_full):
+            print(
+                "ERROR: --read-topic requires at least one read selector: "
+                "--limit, --since-id, --since, or --full"
+            )
+            return 1
+
+        # --full validation
+        if has_full:
+            if not args.confirm_large_read:
+                print("ERROR: --full requires --confirm-large-read")
+                return 1
+            if has_limit or has_since_id or has_until_id or has_since or has_until:
+                print("ERROR: --full cannot be combined with --limit, --since-id, --until-id, --since, or --until")
+                return 1
+
+        # --limit must be positive
+        if has_limit and args.limit <= 0:
             print(f"ERROR: --limit must be a positive integer, got {args.limit}")
             return 1
+
+        # --since-id / --until-id must be positive
+        if has_since_id and args.since_id <= 0:
+            print(f"ERROR: --since-id must be a positive integer, got {args.since_id}")
+            return 1
+        if has_until_id and args.until_id <= 0:
+            print(f"ERROR: --until-id must be a positive integer, got {args.until_id}")
+            return 1
+
+        # --until-id requires --since-id
+        if has_until_id and not has_since_id:
+            print("ERROR: --until-id requires --since-id")
+            return 1
+
+        # --until requires --since
+        if has_until and not has_since:
+            print("ERROR: --until requires --since")
+            return 1
+
+        # Validate date formats
+        if has_since:
+            try:
+                _parse_date(args.since)
+            except ValueError:
+                print(f"ERROR: --since must be YYYY-MM-DD, got {args.since!r}")
+                return 1
+        if has_until:
+            try:
+                _parse_date(args.until)
+            except ValueError:
+                print(f"ERROR: --until must be YYYY-MM-DD, got {args.until!r}")
+                return 1
 
         if not target.exists() or not target.is_dir():
             print(f"ERROR: --target not found or not a directory: {target}")
@@ -870,10 +1053,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             topic_id=topic_id,
             role=role,
             chat_id=args.chat_id,
-            limit=args.limit,
             write=write,
             notes_path=notes_path,
             chunk_size=args.chunk_size,
+            limit=args.limit,
+            since_id=args.since_id,
+            until_id=args.until_id,
+            since=args.since,
+            until=args.until,
+            full=args.full,
         )
         print(report)
         return exit_code

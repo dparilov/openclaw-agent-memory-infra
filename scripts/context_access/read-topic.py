@@ -393,6 +393,8 @@ async def fetch_messages(
     since_id: "int | None",
     workdir: str,
     session_name: str,
+    *,
+    until_id: "int | None" = None,
 ) -> list:
     """Fetch messages from Telegram topic. Returns list of (date, msg_id, sender, text)."""
     from pyrogram import Client
@@ -419,6 +421,8 @@ async def fetch_messages(
                             continue
 
                     if since_id is not None and msg.id <= since_id:
+                        continue
+                    if until_id is not None and msg.id > until_id:
                         continue
 
                     text = msg.text or msg.caption or ""
@@ -453,6 +457,28 @@ async def fetch_messages(
 
     messages.sort(key=lambda x: x[0])
     return messages
+
+
+def filter_by_date(
+    messages: list,
+    since: "str | None" = None,
+    until: "str | None" = None,
+) -> list:
+    """Filter messages by date range (YYYY-MM-DD). Both bounds are inclusive."""
+    if not since and not until:
+        return messages
+    from datetime import datetime as _dt
+    filtered = messages
+    if since:
+        since_dt = _dt.strptime(since, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        filtered = [m for m in filtered if m[0] >= since_dt]
+    if until:
+        # until is inclusive: include all of that day
+        until_dt = _dt.strptime(until, "%Y-%m-%d").replace(
+            hour=23, minute=59, second=59, tzinfo=timezone.utc
+        )
+        filtered = [m for m in filtered if m[0] <= until_dt]
+    return filtered
 
 
 # ---------------------------------------------------------------------------
@@ -509,6 +535,9 @@ def main(argv=None):
     parser.add_argument("topic", help="Topic ID (numeric) or topic name (e.g. telemost)")
     parser.add_argument("--limit", type=int, default=500, help="Max messages to fetch (default: 500)")
     parser.add_argument("--since-id", type=int, default=None, help="Only fetch messages after this message ID")
+    parser.add_argument("--until-id", type=int, default=None, help="Only fetch messages up to this message ID")
+    parser.add_argument("--since", default=None, help="Only fetch messages after YYYY-MM-DD date")
+    parser.add_argument("--until", default=None, help="Only fetch messages before YYYY-MM-DD date")
     parser.add_argument("--chat-id", type=str, default=None, help="Override chat_id (skip auto-discovery)")
     parser.add_argument("--batch-format", action="store_true", help="Output structured transcript for write-pipeline")
     parser.add_argument("--sub-batch-size", type=int, default=200,
@@ -580,7 +609,8 @@ def main(argv=None):
     workdir, session_name = find_session_file(args.session_file, _config=cfg)
 
     print(
-        f"[read-topic] chat={chat_id_int} topic={topic_id_int} limit={args.limit} since_id={args.since_id}",
+        f"[read-topic] chat={chat_id_int} topic={topic_id_int} limit={args.limit} "
+        f"since_id={args.since_id} until_id={getattr(args, 'until_id', None)}",
         file=sys.stderr,
     )
 
@@ -593,8 +623,15 @@ def main(argv=None):
             since_id=args.since_id,
             workdir=workdir,
             session_name=session_name,
+            until_id=getattr(args, "until_id", None),
         )
     )
+
+    # 5b. post-fetch date filtering
+    since_date = getattr(args, "since", None)
+    until_date = getattr(args, "until", None)
+    if since_date or until_date:
+        messages = filter_by_date(messages, since=since_date, until=until_date)
 
     # 6. sub-batch split + checkpoint
     sub = args.sub_batch_size

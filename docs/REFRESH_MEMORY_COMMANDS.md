@@ -44,3 +44,34 @@ The operator sends two files to the agent:
 
 The agent handles everything else: role inference, project location, refresh,
 autofill, private memory, recover, and the MEMORY STARTUP REPORT.
+
+---
+
+## Telegram read parameters (--read-topic)
+
+`--read-topic` requires `--chat-id` and at least one read selector.
+
+| Flag | Description |
+|---|---|
+| `--limit <N>` | Max messages to fetch (must be positive) |
+| `--since-id <ID>` | Only fetch messages after this message ID |
+| `--until-id <ID>` | Only fetch up to this message ID (requires `--since-id`) |
+| `--since <YYYY-MM-DD>` | Only fetch messages after this date |
+| `--until <YYYY-MM-DD>` | Only fetch messages before this date (requires `--since`) |
+| `--full` | Read entire topic history (requires `--confirm-large-read`) |
+| `--confirm-large-read` | Acknowledge that `--full` may fetch many messages |
+
+**Read modes** (auto-detected from flags):
+
+- `limit` — `--limit` only
+- `since-id` — `--since-id` only
+- `message-id-range` — `--since-id` + `--until-id`
+- `since-date` — `--since` only
+- `date-range` — `--since` + `--until`
+- `full` — `--full --confirm-large-read`
+
+**Validation rules:**
+- `--full` cannot be combined with `--limit`, `--since-id`, `--until-id`, `--since`, or `--until`
+- `--until-id` requires `--since-id`
+- `--until` requires `--since`
+- `--topics` is not supported (single-topic mode only)

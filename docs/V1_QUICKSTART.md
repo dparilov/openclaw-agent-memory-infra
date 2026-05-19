@@ -62,13 +62,33 @@ python3 "$PME_REPO/scripts/refresh-memory.py" \
 
 **Telegram bounded read** (explicit operator request only):
 ```bash
+# By message count
 python3 "$PME_REPO/scripts/refresh-memory.py" \
   --target "$PROJECTS_ROOT/<project-dir>" \
   --topic <TOPIC_ID>:<ROLE> \
-  --read-topic \
-  --chat-id <chat-id> \
-  --limit 200 \
-  --write
+  --read-topic --chat-id <chat-id> \
+  --limit 200 --write
+
+# By message ID range
+python3 "$PME_REPO/scripts/refresh-memory.py" \
+  --target "$PROJECTS_ROOT/<project-dir>" \
+  --topic <TOPIC_ID>:<ROLE> \
+  --read-topic --chat-id <chat-id> \
+  --since-id 15000 --until-id 16000 --write
+
+# By date range
+python3 "$PME_REPO/scripts/refresh-memory.py" \
+  --target "$PROJECTS_ROOT/<project-dir>" \
+  --topic <TOPIC_ID>:<ROLE> \
+  --read-topic --chat-id <chat-id> \
+  --since 2026-05-01 --until 2026-05-15 --write
+
+# Full topic (requires confirmation)
+python3 "$PME_REPO/scripts/refresh-memory.py" \
+  --target "$PROJECTS_ROOT/<project-dir>" \
+  --topic <TOPIC_ID>:<ROLE> \
+  --read-topic --chat-id <chat-id> \
+  --full --confirm-large-read --write
 ```
 
 Review the report. Archive step must show `PASS`.
