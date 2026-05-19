@@ -3,6 +3,7 @@
 **Full command reference:** [docs/REFRESH_MEMORY_COMMANDS.md](REFRESH_MEMORY_COMMANDS.md)
 **Installation:** [docs/INSTALL.md](INSTALL.md)
 **Portability:** [docs/PORTABILITY.md](PORTABILITY.md)
+**Agent bootstrap prompts:** [docs/agent-bootstrap/ONE_LINE_PROMPTS.md](agent-bootstrap/ONE_LINE_PROMPTS.md)
 
 ---
 
