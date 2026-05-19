@@ -627,5 +627,139 @@ class TestNewCliArgs(unittest.TestCase):
         self.assertEqual(rt.DEFAULT_MAX_SCAN, 10000)
 
 
+# ---------------------------------------------------------------------------
+# PR47: main() CLI validation — fires before any I/O
+# ---------------------------------------------------------------------------
+
+class TestMainCliValidation(unittest.TestCase):
+    """Verify that main() raises SystemExit on bad CLI args before touching
+    config files, session files, or the network."""
+
+    def _assert_error(self, argv, substring):
+        """Call main(argv) and assert it raises SystemExit containing substring."""
+        with self.assertRaises(SystemExit) as ctx:
+            rt.main(argv)
+        self.assertIn(substring, str(ctx.exception),
+                      f"Expected {substring!r} in SystemExit message, got: {ctx.exception}")
+
+    # -- positive-integer guards -----------------------------------------------
+
+    def test_limit_zero(self):
+        self._assert_error(["9999", "--limit", "0"], "positive")
+
+    def test_limit_negative(self):
+        self._assert_error(["9999", "--limit", "-5"], "positive")
+
+    def test_since_id_negative(self):
+        self._assert_error(["9999", "--since-id", "-1"], "positive")
+
+    def test_until_id_zero(self):
+        # until-id without since-id would also trigger, but zero check fires first
+        self._assert_error(["9999", "--until-id", "0", "--since-id", "1"], "positive")
+
+    def test_max_scan_zero(self):
+        self._assert_error(["9999", "--max-scan", "0"], "positive")
+
+    def test_max_scan_negative(self):
+        self._assert_error(["9999", "--max-scan", "-100"], "positive")
+
+    # -- paired-bounds guards --------------------------------------------------
+
+    def test_until_id_without_since_id(self):
+        self._assert_error(["9999", "--until-id", "500"], "--until-id requires --since-id")
+
+    def test_until_without_since(self):
+        self._assert_error(["9999", "--until", "2026-05-01"], "--until requires --since")
+
+    # -- date-format guards ----------------------------------------------------
+
+    def test_invalid_since_format(self):
+        self._assert_error(["9999", "--since", "01/05/2026"], "YYYY-MM-DD")
+
+    def test_invalid_since_format_nonsense(self):
+        self._assert_error(["9999", "--since", "not-a-date"], "YYYY-MM-DD")
+
+    def test_invalid_until_format(self):
+        self._assert_error(
+            ["9999", "--until", "2026-13-01", "--since", "2026-01-01"],
+            "YYYY-MM-DD",
+        )
+
+    # -- --full constraints ----------------------------------------------------
+
+    def test_full_without_confirm(self):
+        self._assert_error(["9999", "--full"], "--confirm-large-read")
+
+    def test_full_with_limit_rejected(self):
+        self._assert_error(
+            ["9999", "--full", "--confirm-large-read", "--limit", "100"],
+            "cannot be combined",
+        )
+
+    def test_full_with_since_id_rejected(self):
+        self._assert_error(
+            ["9999", "--full", "--confirm-large-read", "--since-id", "100"],
+            "cannot be combined",
+        )
+
+    def test_full_with_since_rejected(self):
+        self._assert_error(
+            ["9999", "--full", "--confirm-large-read", "--since", "2026-01-01"],
+            "cannot be combined",
+        )
+
+    def test_full_with_until_rejected(self):
+        self._assert_error(
+            ["9999", "--full", "--confirm-large-read", "--since", "2026-01-01", "--until", "2026-05-01"],
+            "cannot be combined",
+        )
+
+    # -- ambiguous combos ------------------------------------------------------
+
+    def test_limit_plus_since_id_rejected(self):
+        self._assert_error(
+            ["9999", "--limit", "100", "--since-id", "500"],
+            "ambiguous",
+        )
+
+    def test_limit_plus_since_rejected(self):
+        self._assert_error(
+            ["9999", "--limit", "100", "--since", "2026-01-01"],
+            "ambiguous",
+        )
+
+    # -- valid args pass validation (no SystemExit before I/O) ----------------
+
+    def test_valid_limit_does_not_raise_validation_error(self):
+        """A positive --limit passes validation. Any later error is not a validation error."""
+        try:
+            rt.main(["9999", "--limit", "100"])
+        except BaseException as e:
+            msg = str(e)
+            self.assertNotIn("positive", msg)
+            self.assertNotIn("ambiguous", msg)
+            self.assertNotIn("YYYY-MM-DD", msg)
+            self.assertNotIn("requires --since", msg)
+            self.assertNotIn("cannot be combined", msg)
+
+    def test_valid_since_id_does_not_raise_validation_error(self):
+        """A positive --since-id passes validation. Any later error is not a validation error."""
+        try:
+            rt.main(["9999", "--since-id", "1000"])
+        except BaseException as e:
+            msg = str(e)
+            self.assertNotIn("positive", msg)
+            self.assertNotIn("ambiguous", msg)
+
+    def test_valid_since_and_until_does_not_raise_validation_error(self):
+        """Valid --since/--until dates pass validation. Any later error is not a validation error."""
+        try:
+            rt.main(["9999", "--since", "2026-01-01", "--until", "2026-05-01"])
+        except BaseException as e:
+            msg = str(e)
+            self.assertNotIn("YYYY-MM-DD", msg)
+            self.assertNotIn("requires --since", msg)
+
+
 if __name__ == "__main__":
     unittest.main()

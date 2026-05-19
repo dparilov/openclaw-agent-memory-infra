@@ -584,6 +584,54 @@ def main(argv=None):
                         help="Write transcript output to this file instead of stdout.")
     args = parser.parse_args(argv)
 
+    # ── Validate CLI args before any I/O ─────────────────────────────────────
+    if args.limit is not None and args.limit <= 0:
+        raise SystemExit(f"ERROR: --limit must be a positive integer, got {args.limit}")
+    if args.since_id is not None and args.since_id <= 0:
+        raise SystemExit(f"ERROR: --since-id must be a positive integer, got {args.since_id}")
+    if args.until_id is not None and args.until_id <= 0:
+        raise SystemExit(f"ERROR: --until-id must be a positive integer, got {args.until_id}")
+    if args.max_scan is not None and args.max_scan <= 0:
+        raise SystemExit(f"ERROR: --max-scan must be a positive integer, got {args.max_scan}")
+    if args.until_id is not None and args.since_id is None:
+        raise SystemExit("ERROR: --until-id requires --since-id")
+    if args.until is not None and args.since is None:
+        raise SystemExit("ERROR: --until requires --since")
+    if args.since is not None:
+        try:
+            datetime.strptime(args.since, "%Y-%m-%d")
+        except ValueError:
+            raise SystemExit(f"ERROR: --since must be YYYY-MM-DD, got {args.since!r}")
+    if args.until is not None:
+        try:
+            datetime.strptime(args.until, "%Y-%m-%d")
+        except ValueError:
+            raise SystemExit(f"ERROR: --until must be YYYY-MM-DD, got {args.until!r}")
+    if args.full and not args.confirm_large_read:
+        raise SystemExit("ERROR: --full requires --confirm-large-read")
+    if args.full and any([
+        args.limit is not None,
+        args.since_id is not None,
+        args.until_id is not None,
+        args.since is not None,
+        args.until is not None,
+    ]):
+        raise SystemExit(
+            "ERROR: --full cannot be combined with --limit, --since-id, --until-id, "
+            "--since, or --until"
+        )
+    if args.limit is not None and args.since_id is not None:
+        raise SystemExit(
+            "ERROR: --limit and --since-id are ambiguous together; "
+            "use --since-id alone (with --max-scan for scan cap, not --limit)"
+        )
+    if args.limit is not None and args.since is not None:
+        raise SystemExit(
+            "ERROR: --limit and --since are ambiguous together; "
+            "use --since alone (with --max-scan for scan cap, not --limit)"
+        )
+    # ── End validation ────────────────────────────────────────────────────────
+
     # Load config first (used as fallback in all resolver functions)
     cfg = load_agent_config(config_path=args.config)
 
@@ -627,14 +675,6 @@ def main(argv=None):
 
     # 4. locate session file
     workdir, session_name = find_session_file(args.session_file, _config=cfg)
-
-    # --full validation
-    if args.full and not args.confirm_large_read:
-        raise SystemExit("ERROR: --full requires --confirm-large-read")
-
-    # --max-scan must be positive
-    if args.max_scan is not None and args.max_scan <= 0:
-        raise SystemExit(f"ERROR: --max-scan must be a positive integer, got {args.max_scan}")
 
     # Resolve effective limit: --full means no output cap (None), otherwise default 500
     effective_limit = None if args.full else (args.limit if args.limit is not None else 500)
