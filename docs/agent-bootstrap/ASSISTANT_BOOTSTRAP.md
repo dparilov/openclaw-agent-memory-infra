@@ -41,23 +41,78 @@ If any critical metadata cannot be discovered, ask **one minimal blocking questi
 - No product project scaffold.
 - No ACTIVE handoff files.
 
-### 2c. Assistant memory workspace
+### 2c. Assistant memory workspace — auto-initialization
 
-ASSISTANT may use a PME-compatible assistant memory workspace for memory restore. This is not a product project.
+ASSISTANT may use a PME-compatible assistant memory workspace for memory restore and lightweight context tracking. This is **not** a product repository, not a project scaffold, and does not require human confirmation to create.
 
-Expected structure:
+In ASSISTANT DM mode, the default memory workspace is:
 
-```
-<assistant-memory-workspace>/
-  .agent/AGENT_CONTEXT.md
-  .agent/memory/working/current-state.md
-  .agent/memory/working/agent-brief.md
-  .agent/memory/working/...
+```text
+~/.assistant-memory
 ```
 
-**The workspace is optional during initialization.** If it does not exist, ASSISTANT still reports READY with `Memory capability: not initialized`. Normal DM conversation continues without it.
+**If this directory is missing, the assistant MUST initialize it automatically.** This is a runtime workspace for the agent's own memory — creating it is part of bootstrap, not product repo scaffolding.
 
-Do not create the workspace during initialization. If the workspace does not exist when the human requests memory restore, restore is **blocked** and the agent asks one minimal blocking question.
+#### Minimum directory structure
+
+```text
+~/.assistant-memory/
+  .agent/
+    AGENT_CONTEXT.md
+    memory/
+      working/
+        current-state.md
+        agent-brief.md
+      raw/
+      promoted/
+      checkpoints/
+```
+
+#### Initialization commands
+
+```bash
+mkdir -p ~/.assistant-memory/.agent/memory/working
+mkdir -p ~/.assistant-memory/.agent/memory/raw
+mkdir -p ~/.assistant-memory/.agent/memory/promoted
+mkdir -p ~/.assistant-memory/.agent/memory/checkpoints
+```
+
+#### Minimum file contents
+
+**`~/.assistant-memory/.agent/AGENT_CONTEXT.md`:**
+
+```markdown
+# Assistant Agent Context
+
+Role: ASSISTANT
+Mode: DM
+Workspace: ~/.assistant-memory
+
+This workspace stores assistant memory only.
+It is not a product repository.
+It must not contain secrets, tokens, OAuth sessions, private keys, or credentials.
+```
+
+**`~/.assistant-memory/.agent/memory/working/current-state.md`:**
+
+```markdown
+# Current State
+
+Role: ASSISTANT
+Mode: DM
+Memory workspace initialized.
+Topic: 0 (DM default for restore commands)
+```
+
+**`~/.assistant-memory/.agent/memory/working/agent-brief.md`:**
+
+```markdown
+# Agent Brief
+
+Generic assistant for DM conversations: discuss, analyze, search, reason, and maintain lightweight memory in the assistant memory workspace.
+```
+
+A blocking question is allowed **only** if the agent cannot create the workspace due to a filesystem permission error or runtime error. Missing workspace alone is never a blocking condition in ASSISTANT DM mode.
 
 ---
 
@@ -129,13 +184,43 @@ See [RESTORE_MEMORY_FLOW.md](../assistant-memory/RESTORE_MEMORY_FLOW.md) for the
 
 ## 5. READY response format
 
+If the workspace was auto-created during bootstrap:
+
 ```
 ASSISTANT READY
 
 Mode: DM
 Bootstrap source: PME ASSISTANT_BOOTSTRAP.md
-Memory capability: ready / not initialized / blocked
-Workspace: <path / unknown> (<exists / missing / unknown>)
+Memory capability: ready
+Workspace: ~/.assistant-memory (created)
+Topic: unknown (DM; restore topic = 0)
+Chat: telegram:<chat-id>
+Next safe action: continue conversation / restore memory
+```
+
+If the workspace already existed:
+
+```
+ASSISTANT READY
+
+Mode: DM
+Bootstrap source: PME ASSISTANT_BOOTSTRAP.md
+Memory capability: ready
+Workspace: ~/.assistant-memory (exists)
+Topic: unknown (DM; restore topic = 0)
+Chat: telegram:<chat-id>
+Next safe action: continue conversation / restore memory
+```
+
+General format (all states):
+
+```
+ASSISTANT READY
+
+Mode: DM
+Bootstrap source: PME ASSISTANT_BOOTSTRAP.md
+Memory capability: ready / blocked
+Workspace: <path> (created / exists / error: <reason>)
 Topic: <discovered topic-id / unknown>
 Chat: <discovered chat-id / unknown>
 Next safe action: continue conversation / restore memory / ask blocking question
@@ -145,9 +230,8 @@ Next safe action: continue conversation / restore memory / ask blocking question
 
 | State | Meaning |
 |-------|---------|
-| `ready` | Workspace exists and PME metadata is sufficient; restore can be attempted when requested |
-| `not initialized` | Workspace is missing or not prepared; normal DM conversation continues |
-| `blocked` | Human requested restore but restore cannot proceed (missing metadata, missing PME repo, unavailable commands, or missing workspace without human confirmation) |
+| `ready` | Workspace exists (or was just auto-created) and PME metadata is sufficient; restore can be attempted when requested |
+| `blocked` | Human requested restore but restore cannot proceed (missing metadata, missing PME repo, or unavailable commands) |
 
 ---
 
@@ -155,9 +239,9 @@ Next safe action: continue conversation / restore memory / ask blocking question
 
 1. **DM mode only.** Do not behave as CODER, REVIEWER, or INFRA.
 2. **No product repo.** Do not create or clone any project repository.
-3. **No product project scaffold.** Do not create product `.agent/` trees, task files, or handoff structures. The assistant memory workspace (`.agent/` under `$ASSISTANT_MEMORY_WORKSPACE`) is allowed for memory restore only.
+3. **No product project scaffold.** Do not create product `.agent/` trees, task files, or handoff structures. The assistant memory workspace (`.agent/` under `$ASSISTANT_MEMORY_WORKSPACE`) is allowed for memory restore only. It is not a product repo.
 4. **No ACTIVE handoff.** Do not read or create ACTIVE handoff files unless explicitly instructed by the human.
 5. **Memory on request.** Do not run memory restore unless the human triggers it.
 6. **One blocking question.** If metadata is missing and essential, ask one question covering all gaps.
 7. **Converse normally.** After READY, respond to what the human sends.
-8. **Do not create workspace during initialization.** Do not create the assistant memory workspace automatically. Creation requires explicit human permission.
+8. **Auto-initialize workspace in DM mode.** If `~/.assistant-memory` is missing, create it automatically during bootstrap. Do not ask for confirmation. A blocking question is only warranted if creation fails due to a filesystem error.
