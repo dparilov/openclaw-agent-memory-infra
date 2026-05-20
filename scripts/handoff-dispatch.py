@@ -241,9 +241,14 @@ def _resolve_topic_name(chat_id, topic_name, session_name, workdir):
 
 
 def _send_message(chat_id, topic_id, message, session_name, workdir):
-    """Send message to a Telegram forum topic. Returns message_id or None.
+    """Send message to a Telegram chat or forum topic. Returns message_id or None.
 
-    Uses message_thread_id for forum topic routing (Pyrogram 2.x API).
+    For forum topics (topic_id > 0): passes reply_to_message_id=topic_id to
+    Client.send_message, which routes the message into the correct topic thread
+    (Pyrogram 2.x high-level API — message_thread_id is a Bot API parameter and
+    is NOT accepted by Pyrogram's Client.send_message).
+
+    For DMs or main group chat (topic_id falsy / 0): sends without reply_to.
     """
     try:
         from pyrogram import Client
@@ -251,11 +256,10 @@ def _send_message(chat_id, topic_id, message, session_name, workdir):
 
         async def _run():
             async with Client(session_name, workdir=workdir) as client:
-                msg = await client.send_message(
-                    chat_id=chat_id,
-                    text=message,
-                    message_thread_id=topic_id,
-                )
+                kwargs: dict = {"chat_id": chat_id, "text": message}
+                if topic_id:
+                    kwargs["reply_to_message_id"] = topic_id
+                msg = await client.send_message(**kwargs)
                 return msg.id
 
         return asyncio.run(_run())

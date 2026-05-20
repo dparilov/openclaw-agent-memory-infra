@@ -5,7 +5,7 @@ import io
 import sys
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
@@ -422,3 +422,54 @@ def test_25_failed_send_does_not_update_dispatch_metadata(tmp_path):
     assert code != 0
     fm_after = hd.read_frontmatter(p)
     assert fm_after.get("dispatch") == original_fm.get("dispatch")
+
+
+# ---------------------------------------------------------------------------
+# 26–27  Low-level send call shape (reply_to_message_id, not message_thread_id)
+# ---------------------------------------------------------------------------
+
+def _make_pyrogram_mock(message_id: int):
+    """Build a Pyrogram Client mock that records send_message kwargs."""
+    mock_msg = MagicMock()
+    mock_msg.id = message_id
+
+    mock_client = MagicMock()
+    mock_client.send_message = AsyncMock(return_value=mock_msg)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    mock_pyr = MagicMock()
+    mock_pyr.Client = MagicMock(return_value=mock_client)
+    return mock_pyr, mock_client
+
+
+def test_26_send_message_uses_reply_to_message_id_for_forum_topics():
+    """_send_message must call client.send_message with reply_to_message_id.
+
+    message_thread_id is a Bot API parameter; Pyrogram's Client.send_message
+    does NOT accept it.  This test pins the exact kwarg used.
+    """
+    mock_pyr, mock_client = _make_pyrogram_mock(message_id=42)
+
+    with patch.dict(sys.modules, {"pyrogram": mock_pyr}):
+        result = hd._send_message(-1234567890, 13350, "hello", "test_sess", "/tmp")
+
+    assert result == 42
+    call_kwargs = mock_client.send_message.call_args.kwargs
+    assert "message_thread_id" not in call_kwargs, (
+        "message_thread_id is a Bot API parameter — must not appear in Pyrogram call"
+    )
+    assert call_kwargs.get("reply_to_message_id") == 13350
+
+
+def test_27_send_message_no_reply_to_when_topic_id_is_zero():
+    """For DM / main chat (topic_id=0), send_message must omit reply_to_message_id."""
+    mock_pyr, mock_client = _make_pyrogram_mock(message_id=77)
+
+    with patch.dict(sys.modules, {"pyrogram": mock_pyr}):
+        result = hd._send_message(-1234567890, 0, "hello", "test_sess", "/tmp")
+
+    assert result == 77
+    call_kwargs = mock_client.send_message.call_args.kwargs
+    assert "reply_to_message_id" not in call_kwargs
+    assert "message_thread_id" not in call_kwargs
