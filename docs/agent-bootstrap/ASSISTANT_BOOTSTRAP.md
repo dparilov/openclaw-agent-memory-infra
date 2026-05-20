@@ -220,19 +220,38 @@ Do not invent tasks. Do not start unsolicited work. Respond to what the human se
 
 Memory is restored **on request**, not by manual update commands.
 
-### Trigger phrases
+### Default restore — local-first
 
-Restore memory when the human sends any of:
-
+Triggered by:
 - `восстанови память`
 - `restore memory`
-- Close variants (e.g. "восстанови контекст", "reload memory", "load memory")
+- Close variants: "восстанови контекст", "reload memory", "load memory"
 
-### Restore flow (if PME commands are available)
+**Default restore reads local workspace files only.** It does **not** run `refresh-memory.py --read-topic`. Pyrogram and a Telegram session are **not required**.
+
+Local workspace files read:
+- `.agent/AGENT_CONTEXT.md`
+- `.agent/memory/working/*.md`
+- `.agent/memory/promoted/*.md` (if present)
+- `.agent/memory/raw/*.md` (if present)
+
+Optionally, if PME tooling is available, run `recover-memory.py` for structured extraction. If PME tooling is unavailable, use the locally read files directly.
+
+### Explicit Telegram history import
+
+Triggered only by:
+- `восстанови память из Telegram`
+- `импортируй историю Telegram`
+- `import Telegram history`
+- `backfill from Telegram`
+
+Requires Pyrogram installed + session found + `chat-id` known. If Pyrogram is unavailable, report `TELEGRAM HISTORY IMPORT: unavailable` and continue with local memory.
+
+When available, runs:
 
 ```bash
-python3 <PME_REPO>/scripts/refresh-memory.py \
-  --target <assistant-memory-workspace> \
+python3 "$PME_REPO"/scripts/refresh-memory.py \
+  --target "$ASSISTANT_MEMORY_WORKSPACE" \
   --topic 0:unknown \
   --read-topic \
   --chat-id <chat-id> \
@@ -244,24 +263,20 @@ python3 <PME_REPO>/scripts/refresh-memory.py \
 Then:
 
 ```bash
-python3 <PME_REPO>/scripts/recover-memory.py \
-  --target <assistant-memory-workspace> \
+python3 "$PME_REPO"/scripts/recover-memory.py \
+  --target "$ASSISTANT_MEMORY_WORKSPACE" \
   --topic 0 \
   --role unknown
 ```
 
 **Notes:**
-- `--topic 0:unknown` / `--topic 0`: use `0` for Telegram DMs (no forum thread). Replace with the actual topic-id if operating in a forum thread.
-- `Topic: unknown (DM)` in the READY output indicates a Telegram DM with no thread id; `0` is the correct restore value.
-- For small DM topics, use `--full` read by default.
-- `--role unknown` is the safe fallback for the current CLI. Use `--role assistant` only after first-class assistant role support is added in a separate runtime PR.
-- `<PME_REPO>` is the local path to `openclaw-agent-memory-infra`.
+- `--topic 0:unknown` / `--topic 0`: use `0` for Telegram DMs. Replace with actual topic-id for forum threads.
+- `--role unknown` is the safe fallback for the current CLI.
+- `$PME_REPO` must be resolved first (see section 2e and `RESTORE_MEMORY_FLOW.md` section 2b).
 
-### Restore flow (if PME commands are not available)
+### Restore flow (if local files only — PME not available)
 
-If the scripts are not accessible in the current environment:
-
-1. Report that PME commands are unavailable.
+If PME scripts are not accessible in the current environment:
 2. Attempt to read any available memory files from `<assistant-memory-workspace>` directly.
 3. Summarize what was found, or report that memory restore is blocked.
 
