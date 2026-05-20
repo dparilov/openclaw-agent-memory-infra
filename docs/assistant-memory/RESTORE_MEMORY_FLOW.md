@@ -16,18 +16,25 @@ Memory restore is initiated by the human. The agent must not run restore unpromp
 
 ---
 
-## 2. Pre-restore: confirm metadata
+## 2. Pre-restore: confirm metadata and workspace
 
-Before running restore, verify the following are known:
+Before running restore, verify the following:
 
 | Item | Source |
 |------|--------|
 | `<assistant-memory-workspace>` | `$ASSISTANT_MEMORY_WORKSPACE` or `$HOME/.assistant-memory` |
+| Workspace exists on disk | Check with `ls <assistant-memory-workspace>/.agent/` |
 | `<topic-id>` | `$OPENCLAW_TOPIC_ID` or runtime context |
 | `<chat-id>` | `$OPENCLAW_CHAT_ID` or runtime context |
 | `<PME_REPO>` | Local path to `openclaw-agent-memory-infra` |
 
-If any item is unknown and cannot be inferred, ask **one blocking question** covering all missing items before proceeding.
+**If workspace is missing:** output MEMORY RESTORE BLOCKED and ask:
+
+> Assistant memory workspace `~/.assistant-memory` does not exist. Should I initialize it for DM memory restore?
+
+Do not create the workspace until the human answers yes.
+
+If any other item is unknown and cannot be inferred, ask **one blocking question** covering all missing items before proceeding.
 
 ---
 
