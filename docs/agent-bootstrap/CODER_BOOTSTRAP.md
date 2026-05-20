@@ -29,6 +29,21 @@ Try each method in order; stop at the first success:
 
 Record the resolved path as `$TARGET`.
 
+### Fresh project mode
+
+If the local path does not exist after the operator provides it:
+
+1. **Ask one blocking question:** _"Path `<path>` does not exist. Should I create a fresh project scaffold there? (yes / no)"_
+2. Wait for explicit human confirmation before creating anything.
+3. Only after confirmation, create the scaffold — no more, no less:
+   - `README.md`
+   - `.gitignore`
+   - `.agent/AGENT_CONTEXT.md`
+   - `.agent/memory/working/current-state.md`
+   - Scope-relevant empty directories (e.g. `docs/`, `workflows/`, `prompts/`, `schemas/`, `test-payloads/`)
+4. After scaffold creation, **stop and report CODER READY** (see section 7).
+5. Do not begin feature implementation. The scaffold completes initialization.
+
 ---
 
 ## 3. Load project context
@@ -79,6 +94,7 @@ Understand the current branch, uncommitted changes, and recent history.
 4. **Write tests** when the project has a test suite and your change is testable.
 5. **Produce an implementation report** after completing work (see format below).
 6. **Escalate blockers.** If you discover something that prevents completing the scope, report it immediately rather than working around it silently.
+7. **Post-READY: do not invent work.** After reporting READY, implement only if `.agent/handoffs/ACTIVE.md` is assigned to CODER with status `ready_for_implementation` or `changes_requested`, or if the human gives an explicit implementation instruction.
 
 ---
 
@@ -118,6 +134,10 @@ Path: <resolved target path>
 Scope: <scope>
 Context loaded: <yes/no>
 Branch: <current branch>
+Active handoff: <found / not found / assigned to other role>
+Next safe action: <wait for ACTIVE handoff | implement ACTIVE handoff | ask blocking question>
 ```
 
-Then read `.agent/handoffs/ACTIVE.md` if it exists and follow the [Active Handoff Protocol](../agent-collaboration/ACTIVE_HANDOFF_PROTOCOL.md). If no handoff file exists, begin working on the scope directly.
+Read `.agent/handoffs/ACTIVE.md` if it exists and follow the [Active Handoff Protocol](../agent-collaboration/ACTIVE_HANDOFF_PROTOCOL.md).
+
+If ACTIVE.md is not found, or is assigned to a different role: **wait**. Do not invent implementation work. The next action comes from an ACTIVE handoff or explicit human instruction.

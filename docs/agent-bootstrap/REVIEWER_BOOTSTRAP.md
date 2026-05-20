@@ -131,6 +131,24 @@ Path: <resolved target path>
 Scope: <scope>
 Context loaded: <yes/no>
 Review target: <PR number or branch>
+Active handoff: <found / not found / assigned to other role>
+Next safe action: <wait for task discussion | review ACTIVE handoff | ask blocking question>
 ```
 
-Then read `.agent/handoffs/ACTIVE.md` if it exists and follow the [Active Handoff Protocol](../agent-collaboration/ACTIVE_HANDOFF_PROTOCOL.md). If no handoff file exists, begin the review directly.
+Read `.agent/handoffs/ACTIVE.md` if it exists and follow the [Active Handoff Protocol](../agent-collaboration/ACTIVE_HANDOFF_PROTOCOL.md).
+
+If ACTIVE.md is not found, or is assigned to a different role: **wait**. Do not invent review targets. The next action comes from an ACTIVE handoff or explicit human instruction.
+
+---
+
+## 9. Post-READY rule
+
+After reporting REVIEWER READY, do **not** invent review targets.
+
+Begin review work only when one of the following is true:
+
+- `.agent/handoffs/ACTIVE.md` exists, is assigned to REVIEWER, and has status `ready_for_review`, **or**
+- The human gives an explicit instruction to create an ACTIVE handoff from a discussion, **or**
+- The human gives an explicit instruction to review a specific PR or branch.
+
+If none of these conditions are met: **wait**.
