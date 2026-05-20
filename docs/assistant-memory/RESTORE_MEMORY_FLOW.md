@@ -38,7 +38,7 @@ If any item is unknown and cannot be inferred, ask **one blocking question** cov
 ```bash
 python3 <PME_REPO>/scripts/refresh-memory.py \
   --target <assistant-memory-workspace> \
-  --topic <topic-id>:assistant \
+  --topic <topic-id>:unknown \
   --read-topic \
   --chat-id <chat-id> \
   --full \
@@ -56,10 +56,10 @@ python3 <PME_REPO>/scripts/refresh-memory.py \
 python3 <PME_REPO>/scripts/recover-memory.py \
   --target <assistant-memory-workspace> \
   --topic <topic-id> \
-  --role assistant
+  --role unknown
 ```
 
-**Fallback:** If `--role assistant` is not yet supported, use `--role unknown` until first-class assistant role support is added to `recover-memory.py`.
+> **Note:** `--role unknown` is the safe fallback for the current CLI. Use `--role assistant` only after first-class assistant role support is added in a separate runtime PR.
 
 ---
 
@@ -70,9 +70,9 @@ If the PME scripts are not accessible:
 1. Report: `PME commands not available in this environment.`
 2. Attempt to read memory files directly:
    ```bash
-   ls <assistant-memory-workspace>/
-   cat <assistant-memory-workspace>/current-state.md 2>/dev/null
-   cat <assistant-memory-workspace>/agent-brief.md 2>/dev/null
+   ls <assistant-memory-workspace>/.agent/memory/working/
+   cat <assistant-memory-workspace>/.agent/memory/working/current-state.md 2>/dev/null
+   cat <assistant-memory-workspace>/.agent/memory/working/agent-brief.md 2>/dev/null
    ```
 3. Summarize what was found, or report that memory restore is blocked.
 

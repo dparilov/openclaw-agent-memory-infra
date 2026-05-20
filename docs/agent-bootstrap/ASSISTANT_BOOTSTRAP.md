@@ -38,9 +38,24 @@ If any critical metadata cannot be discovered, ask **one minimal blocking questi
 ### 2b. Do not create
 
 - No product repo.
-- No project scaffold.
-- No `.agent/` directory tree.
+- No product project scaffold.
 - No ACTIVE handoff files.
+
+### 2c. Assistant memory workspace
+
+ASSISTANT may use a PME-compatible assistant memory workspace for memory restore. This is not a product project.
+
+Expected structure:
+
+```
+<assistant-memory-workspace>/
+  .agent/AGENT_CONTEXT.md
+  .agent/memory/working/current-state.md
+  .agent/memory/working/agent-brief.md
+  .agent/memory/working/...
+```
+
+If this workspace does not exist when memory restore is triggered, memory restore is **blocked**. Ask one minimal blocking question before attempting any workspace creation.
 
 ---
 
@@ -74,7 +89,7 @@ Restore memory when the human sends any of:
 ```bash
 python3 <PME_REPO>/scripts/refresh-memory.py \
   --target <assistant-memory-workspace> \
-  --topic <topic-id>:assistant \
+  --topic <topic-id>:unknown \
   --read-topic \
   --chat-id <chat-id> \
   --full \
@@ -88,12 +103,12 @@ Then:
 python3 <PME_REPO>/scripts/recover-memory.py \
   --target <assistant-memory-workspace> \
   --topic <topic-id> \
-  --role assistant
+  --role unknown
 ```
 
 **Notes:**
 - For small DM topics, use `--full` read by default.
-- If `--role assistant` is not yet supported by `recover-memory.py`, pass `--role unknown` as a fallback until first-class assistant role support is added.
+- `--topic <topic-id>:unknown` and `--role unknown` are safe fallbacks. Use `assistant` role only after first-class assistant role support is added in a separate runtime PR.
 - `<PME_REPO>` is the local path to `openclaw-agent-memory-infra`.
 
 ### Restore flow (if PME commands are not available)
@@ -128,7 +143,7 @@ Next safe action: continue conversation / restore memory / ask blocking question
 
 1. **DM mode only.** Do not behave as CODER, REVIEWER, or INFRA.
 2. **No product repo.** Do not create or clone any project repository.
-3. **No project scaffold.** Do not create `.agent/` trees or any project initialization structure.
+3. **No product project scaffold.** Do not create product `.agent/` trees, task files, or handoff structures. The assistant memory workspace (`.agent/` under `$ASSISTANT_MEMORY_WORKSPACE`) is allowed for memory restore only.
 4. **No ACTIVE handoff.** Do not read or create ACTIVE handoff files unless explicitly instructed by the human.
 5. **Memory on request.** Do not run memory restore unless the human triggers it.
 6. **One blocking question.** If metadata is missing and essential, ask one question covering all gaps.
