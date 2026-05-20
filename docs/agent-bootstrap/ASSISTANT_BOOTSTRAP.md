@@ -55,7 +55,9 @@ Expected structure:
   .agent/memory/working/...
 ```
 
-If this workspace does not exist when memory restore is triggered, memory restore is **blocked**. Ask one minimal blocking question before attempting any workspace creation.
+**The workspace is optional during initialization.** If it does not exist, ASSISTANT still reports READY with `Memory capability: not initialized`. Normal DM conversation continues without it.
+
+Do not create the workspace during initialization. If the workspace does not exist when the human requests memory restore, restore is **blocked** and the agent asks one minimal blocking question.
 
 ---
 
@@ -130,12 +132,20 @@ ASSISTANT READY
 
 Mode: DM
 Bootstrap source: PME ASSISTANT_BOOTSTRAP.md
-Memory restore: ready / blocked
-Workspace: <discovered path / unknown>
+Memory capability: ready / not initialized / blocked
+Workspace: <path / unknown> (<exists / missing / unknown>)
 Topic: <discovered topic-id / unknown>
 Chat: <discovered chat-id / unknown>
 Next safe action: continue conversation / restore memory / ask blocking question
 ```
+
+**Memory capability states:**
+
+| State | Meaning |
+|-------|---------|
+| `ready` | Workspace exists and PME metadata is sufficient; restore can be attempted when requested |
+| `not initialized` | Workspace is missing or not prepared; normal DM conversation continues |
+| `blocked` | Human requested restore but restore cannot proceed (missing metadata, missing PME repo, unavailable commands, or missing workspace without human confirmation) |
 
 ---
 
@@ -148,3 +158,4 @@ Next safe action: continue conversation / restore memory / ask blocking question
 5. **Memory on request.** Do not run memory restore unless the human triggers it.
 6. **One blocking question.** If metadata is missing and essential, ask one question covering all gaps.
 7. **Converse normally.** After READY, respond to what the human sends.
+8. **Do not create workspace during initialization.** Do not create the assistant memory workspace automatically. Creation requires explicit human permission.

@@ -20,7 +20,7 @@ The ASSISTANT role exists for direct-message (DM) conversations with a human. It
 
 DM mode is a lightweight, conversation-first operating mode. The agent initializes from the bootstrap document, discovers metadata silently where possible, reports READY, and then responds naturally to whatever the human sends.
 
-Memory is available but passive — it is loaded only when the human requests it.
+Memory is a **capability**, not a prerequisite. ASSISTANT can operate fully without a memory workspace. If the workspace is missing, memory capability is `not initialized` — normal conversation continues unaffected.
 
 ---
 
@@ -29,7 +29,7 @@ Memory is available but passive — it is loaded only when the human requests it
 | Not in DM mode | Reason |
 |----------------|--------|
 | Product repo creation | ASSISTANT has no product to build |
-| Project scaffold creation | No `.agent/` tree, no task files, no handoffs |
+| Product project scaffold creation | No product `.agent/` tree, no task files, no handoffs (assistant memory workspace is separate and optional) |
 | ACTIVE handoff management | ACTIVE handoffs are for CODER/REVIEWER collaboration |
 | Autonomous task execution | ASSISTANT responds; it does not self-assign work |
 | Manual memory update commands | Memory restore is triggered by the human, not by the agent |
@@ -59,6 +59,12 @@ Default location: `$HOME/.assistant-memory`
 Override: set `$ASSISTANT_MEMORY_WORKSPACE` in the environment.
 
 The workspace holds memory extracted from the DM topic — not from any product project.
+
+**The workspace is optional.** If it does not exist:
+- ASSISTANT initializes normally and reports `Memory capability: not initialized`.
+- Normal conversation continues without restriction.
+- Memory restore becomes blocked only if the human explicitly requests it.
+- Workspace creation requires explicit human permission — ASSISTANT does not create it automatically.
 
 ---
 
