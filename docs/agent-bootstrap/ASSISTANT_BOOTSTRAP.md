@@ -91,7 +91,7 @@ Restore memory when the human sends any of:
 ```bash
 python3 <PME_REPO>/scripts/refresh-memory.py \
   --target <assistant-memory-workspace> \
-  --topic <topic-id>:unknown \
+  --topic 0:unknown \
   --read-topic \
   --chat-id <chat-id> \
   --full \
@@ -104,13 +104,15 @@ Then:
 ```bash
 python3 <PME_REPO>/scripts/recover-memory.py \
   --target <assistant-memory-workspace> \
-  --topic <topic-id> \
+  --topic 0 \
   --role unknown
 ```
 
 **Notes:**
+- `--topic 0:unknown` / `--topic 0`: use `0` for Telegram DMs (no forum thread). Replace with the actual topic-id if operating in a forum thread.
+- `Topic: unknown (DM)` in the READY output indicates a Telegram DM with no thread id; `0` is the correct restore value.
 - For small DM topics, use `--full` read by default.
-- `--topic <topic-id>:unknown` and `--role unknown` are safe fallbacks. Use `assistant` role only after first-class assistant role support is added in a separate runtime PR.
+- `--role unknown` is the safe fallback for the current CLI. Use `--role assistant` only after first-class assistant role support is added in a separate runtime PR.
 - `<PME_REPO>` is the local path to `openclaw-agent-memory-infra`.
 
 ### Restore flow (if PME commands are not available)
