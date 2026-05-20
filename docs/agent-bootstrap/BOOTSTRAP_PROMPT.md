@@ -54,9 +54,22 @@ Project: <project>
 Path: <resolved target path>
 Scope: <scope>
 Context loaded: <yes/no>
+Active handoff: <found / not found / assigned to other role>
+Next safe action: <wait for ACTIVE handoff | implement/review ACTIVE handoff | ask blocking question>
 ```
 
 CODER adds: `Branch: <current branch>`
 REVIEWER adds: `Review target: <PR number or branch>`
 
-After the READY response, begin the role-specific work.
+---
+
+## 5. Post-READY discipline
+
+**READY means initialization is complete — not permission to begin arbitrary work.**
+
+After reporting READY:
+
+- Read `.agent/handoffs/ACTIVE.md` if it exists and follow the [Active Handoff Protocol](../agent-collaboration/ACTIVE_HANDOFF_PROTOCOL.md).
+- If no ACTIVE handoff is found, or it is assigned to a different role: **wait**.
+- Work begins only from an ACTIVE handoff assigned to your role, or from an explicit human instruction.
+- Do not invent implementation tasks, review targets, or next actions.
