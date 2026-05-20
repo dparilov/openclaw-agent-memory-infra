@@ -148,6 +148,8 @@ if [ ! -d "$HOME/.pme/openclaw-agent-memory-infra/.git" ]; then
 else
   git -C "$HOME/.pme/openclaw-agent-memory-infra" pull --ff-only
 fi
+
+PME_REPO="$HOME/.pme/openclaw-agent-memory-infra"
 ```
 
 Then validate:
