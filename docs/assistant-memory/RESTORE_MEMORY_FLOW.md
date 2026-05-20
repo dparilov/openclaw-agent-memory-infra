@@ -24,7 +24,7 @@ Before running restore, verify the following:
 |------|--------|
 | `<assistant-memory-workspace>` | `$ASSISTANT_MEMORY_WORKSPACE` or `$HOME/.assistant-memory` |
 | Workspace exists on disk | Check with `ls <assistant-memory-workspace>/.agent/` |
-| `<topic-id>` | `$OPENCLAW_TOPIC_ID` or runtime context |
+| `<topic-id>` | `$OPENCLAW_TOPIC_ID` or runtime context. **For Telegram DMs (no forum thread), use `0`.** |
 | `<chat-id>` | `$OPENCLAW_CHAT_ID` or runtime context |
 | `<PME_REPO>` | Local path to `openclaw-agent-memory-infra` |
 
@@ -42,6 +42,21 @@ If any other item is unknown and cannot be inferred, ask **one blocking question
 
 ### Step 1 — Refresh memory from topic
 
+For **Telegram DM** (no forum thread, `Topic: unknown (DM)`):
+
+```bash
+python3 <PME_REPO>/scripts/refresh-memory.py \
+  --target <assistant-memory-workspace> \
+  --topic 0:unknown \
+  --read-topic \
+  --chat-id <chat-id> \
+  --full \
+  --confirm-large-read \
+  --write
+```
+
+For **forum thread** (topic-id is known):
+
 ```bash
 python3 <PME_REPO>/scripts/refresh-memory.py \
   --target <assistant-memory-workspace> \
@@ -53,6 +68,7 @@ python3 <PME_REPO>/scripts/refresh-memory.py \
   --write
 ```
 
+- `--topic 0:unknown`: use `0` when there is no forum thread id (Telegram DM / main chat).
 - `--full`: read all available messages. Appropriate for small DM topics.
 - `--confirm-large-read`: prompts before reading unexpectedly large topics.
 - `--write`: persist the extracted memory to the workspace.
@@ -62,9 +78,11 @@ python3 <PME_REPO>/scripts/refresh-memory.py \
 ```bash
 python3 <PME_REPO>/scripts/recover-memory.py \
   --target <assistant-memory-workspace> \
-  --topic <topic-id> \
+  --topic <topic-id-or-0> \
   --role unknown
 ```
+
+Use `0` in place of `<topic-id-or-0>` when operating in DM mode without a forum thread.
 
 > **Note:** `--role unknown` is the safe fallback for the current CLI. Use `--role assistant` only after first-class assistant role support is added in a separate runtime PR.
 
