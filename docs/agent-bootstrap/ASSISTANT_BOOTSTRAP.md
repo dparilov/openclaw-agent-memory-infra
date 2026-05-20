@@ -114,7 +114,26 @@ Generic assistant for DM conversations: discuss, analyze, search, reason, and ma
 
 A blocking question is allowed **only** if the agent cannot create the workspace due to a filesystem permission error or runtime error. Missing workspace alone is never a blocking condition in ASSISTANT DM mode.
 
-### 2d. PME tooling checkout — auto-provisioning
+### 2d. Pyrogram capability check
+
+Pyrogram is an optional capability. Check it during bootstrap before reporting READY.
+
+```bash
+# Step 1: check if pyrogram is installed
+python3 -c "import pyrogram" 2>/dev/null && echo "installed" || echo "not installed"
+
+# Step 2: find session candidates (in order)
+# 1. $PYROGRAM_SESSION, if set
+# 2. ~/.agent-secrets/pyrogram/userbot.session
+# 3. ~/.openclaw/workspace/ops/userbot.session
+# 4. any ~/.openclaw/workspace/**/*.session
+```
+
+Missing Pyrogram or session is **never** a blocking condition. Report and continue.
+
+See [`docs/security/PYROGRAM_CAPABILITY.md`](../security/PYROGRAM_CAPABILITY.md) for the full check procedure, normalization, security rules, and READY report format.
+
+### 2e. PME tooling checkout — auto-provisioning
 
 ASSISTANT memory restore requires PME scripts:
 
@@ -262,6 +281,7 @@ Bootstrap source: PME ASSISTANT_BOOTSTRAP.md
 Memory capability: ready
 Workspace: ~/.assistant-memory (created)
 PME tooling: ready (~/.pme/openclaw-agent-memory-infra, cloned)
+Pyrogram capability: ready (session: <path>) / unavailable (<reason>; fallback: local memory only)
 Topic: unknown (DM; restore topic = 0)
 Chat: telegram:<chat-id>
 Next safe action: continue conversation / restore memory
@@ -277,6 +297,7 @@ Bootstrap source: PME ASSISTANT_BOOTSTRAP.md
 Memory capability: ready
 Workspace: ~/.assistant-memory (exists)
 PME tooling: ready (~/.pme/openclaw-agent-memory-infra, up to date)
+Pyrogram capability: ready (session: <path>) / unavailable (<reason>; fallback: local memory only)
 Topic: unknown (DM; restore topic = 0)
 Chat: telegram:<chat-id>
 Next safe action: continue conversation / restore memory
@@ -292,6 +313,7 @@ Bootstrap source: PME ASSISTANT_BOOTSTRAP.md
 Memory capability: ready
 Workspace: ~/.assistant-memory (created / exists)
 PME tooling: blocked (<reason: git unavailable / clone failed / network error>)
+Pyrogram capability: ready (session: <path>) / unavailable (<reason>; fallback: local memory only)
 Topic: unknown (DM; restore topic = 0)
 Chat: telegram:<chat-id>
 Next safe action: continue conversation / ask for PME tooling path before restore
