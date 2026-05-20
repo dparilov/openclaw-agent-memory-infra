@@ -28,11 +28,9 @@ Before running restore, verify the following:
 | `<chat-id>` | `$OPENCLAW_CHAT_ID` or runtime context |
 | `<PME_REPO>` | Local path to `openclaw-agent-memory-infra` |
 
-**If workspace is missing:** output MEMORY RESTORE BLOCKED and ask:
+**If workspace is missing in ASSISTANT DM mode:** the workspace must have been auto-initialized during bootstrap (see `ASSISTANT_BOOTSTRAP.md` section 2c). If it is still missing at restore time, the agent must initialize it now — no confirmation needed. Missing workspace is **not** a blocking condition.
 
-> Assistant memory workspace `~/.assistant-memory` does not exist. Should I initialize it for DM memory restore?
-
-Do not create the workspace until the human answers yes.
+A blocking question about workspace creation is allowed **only** if the agent cannot create the workspace due to a filesystem permission error or runtime error.
 
 If any other item is unknown and cannot be inferred, ask **one blocking question** covering all missing items before proceeding.
 
