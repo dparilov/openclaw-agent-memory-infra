@@ -27,6 +27,7 @@ Before running restore, verify the following:
 | `<topic-id>` | `$OPENCLAW_TOPIC_ID` or runtime context. **For Telegram DMs (no forum thread), use `0`.** |
 | `<chat-id>` | `$OPENCLAW_CHAT_ID` or runtime context |
 | `<PME_REPO>` | Local path to `openclaw-agent-memory-infra` |
+| Pyrogram capability | Optional — check `import pyrogram` and session existence. If unavailable, `refresh-memory.py` falls back to local memory only; Telegram history import is disabled. Missing Pyrogram is not a blocking condition. See [`docs/security/PYROGRAM_CAPABILITY.md`](../security/PYROGRAM_CAPABILITY.md). |
 
 **If workspace is missing in ASSISTANT DM mode:** the workspace must have been auto-initialized during bootstrap (see `ASSISTANT_BOOTSTRAP.md` section 2c). If it is still missing at restore time, the agent must initialize it now — no confirmation needed. Missing workspace is **not** a blocking condition.
 

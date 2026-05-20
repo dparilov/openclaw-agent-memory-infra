@@ -135,8 +135,11 @@ Scope: <scope>
 Context loaded: <yes/no>
 Branch: <current branch>
 Active handoff: <found / not found / assigned to other role>
+Pyrogram capability: ready (session: <path>) / unavailable (<reason>; affected: auto-handoff dispatch, Telegram history import; fallback: manual notification, local memory)
 Next safe action: <wait for ACTIVE handoff | implement ACTIVE handoff | ask blocking question>
 ```
+
+**Pyrogram capability** is optional. Missing Pyrogram or session does not block CODER READY. See [`docs/security/PYROGRAM_CAPABILITY.md`](../security/PYROGRAM_CAPABILITY.md) for the full capability check procedure and READY report format.
 
 Read `.agent/handoffs/ACTIVE.md` if it exists and follow the [Active Handoff Protocol](../agent-collaboration/ACTIVE_HANDOFF_PROTOCOL.md).
 
