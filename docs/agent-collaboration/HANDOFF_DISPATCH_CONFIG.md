@@ -4,7 +4,9 @@ Configuration reference for the handoff dispatcher.
 
 Config file location: `<target>/.agent/config.yaml`
 
-> **Status:** Config schema documented here. Runtime config parsing is implemented in a future PR (PR55).
+> **Status:** Config schema documented here. Runtime config parsing is implemented in PR55.
+
+> **Secrets:** Pyrogram session files must not be committed. Store them under the secrets registry root (`~/.agent-secrets/pyrogram/`). See [docs/security/SECRETS_REGISTRY_PROTOCOL.md](../security/SECRETS_REGISTRY_PROTOCOL.md).
 
 ---
 
@@ -24,8 +26,10 @@ handoff_dispatch:
 
   pyrogram:
     session_name: handoff_dispatcher
-    workdir: ~/.pyrogram
+    workdir: ~/.agent-secrets/pyrogram
     # actual auth/session files are local secrets and must not be committed
+    # Pyrogram session is registered in the secrets registry:
+    # secret_ref: telegram.pyrogram.handoff_dispatcher
 
   trusted_sender:
     type: user_session
