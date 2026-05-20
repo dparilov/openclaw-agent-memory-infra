@@ -114,6 +114,72 @@ Generic assistant for DM conversations: discuss, analyze, search, reason, and ma
 
 A blocking question is allowed **only** if the agent cannot create the workspace due to a filesystem permission error or runtime error. Missing workspace alone is never a blocking condition in ASSISTANT DM mode.
 
+### 2d. PME tooling checkout — auto-provisioning
+
+ASSISTANT memory restore requires PME scripts:
+
+```text
+scripts/refresh-memory.py
+scripts/recover-memory.py
+```
+
+These scripts live in the `openclaw-agent-memory-infra` repository.
+
+In ASSISTANT DM mode, if PME scripts are not available locally, the assistant **MUST** auto-provision a local PME tooling checkout. This is **not** a product repository and does not require human confirmation.
+
+#### PME_REPO discovery order
+
+Resolve `PME_REPO` using this order. A path is valid only if both `scripts/refresh-memory.py` and `scripts/recover-memory.py` exist inside it.
+
+1. `$PME_REPO` — if set and valid.
+2. `$OPENCLAW_AGENT_MEMORY_INFRA` — if set and valid.
+3. `$HOME/openclaw-agent-memory-infra` — if valid.
+4. `$HOME/.pme/openclaw-agent-memory-infra` — if valid.
+5. If none is valid, clone from GitHub into `$HOME/.pme/openclaw-agent-memory-infra`.
+
+#### Auto-provisioning commands
+
+```bash
+mkdir -p "$HOME/.pme"
+
+if [ ! -d "$HOME/.pme/openclaw-agent-memory-infra/.git" ]; then
+  git clone https://github.com/dparilov/openclaw-agent-memory-infra.git \
+    "$HOME/.pme/openclaw-agent-memory-infra"
+else
+  git -C "$HOME/.pme/openclaw-agent-memory-infra" pull --ff-only
+fi
+```
+
+Then validate:
+
+```bash
+test -f "$PME_REPO/scripts/refresh-memory.py" && \
+test -f "$PME_REPO/scripts/recover-memory.py"
+```
+
+#### Failure semantics
+
+Missing local PME repo before auto-provisioning is **not** a blocking condition.
+
+Blocking is allowed only if one of these occurs:
+
+- `git` is unavailable in the environment;
+- GitHub/network access fails;
+- `git clone` fails;
+- `git pull` fails;
+- scripts are still missing after clone/pull;
+- filesystem permission error prevents the checkout.
+
+#### PME tooling prohibited behaviors after PR58
+
+ASSISTANT must not:
+
+- Say `PME repo: not found locally` without first attempting auto-provisioning.
+- Say `По правилам бутстрапа сам ничего не клонирую` when referring to the `openclaw-agent-memory-infra` PME tooling checkout.
+- Report `Memory capability: blocked` on READY only because PME repo was missing before clone.
+
+See [`docs/assistant-memory/PME_TOOLING_CHECKOUT.md`](../assistant-memory/PME_TOOLING_CHECKOUT.md) for the full reference.
+
 ---
 
 ## 3. Normal operation
@@ -184,7 +250,7 @@ See [RESTORE_MEMORY_FLOW.md](../assistant-memory/RESTORE_MEMORY_FLOW.md) for the
 
 ## 5. READY response format
 
-If the workspace was auto-created during bootstrap:
+If the workspace was auto-created and PME tooling was cloned:
 
 ```
 ASSISTANT READY
@@ -193,12 +259,13 @@ Mode: DM
 Bootstrap source: PME ASSISTANT_BOOTSTRAP.md
 Memory capability: ready
 Workspace: ~/.assistant-memory (created)
+PME tooling: ready (~/.pme/openclaw-agent-memory-infra, cloned)
 Topic: unknown (DM; restore topic = 0)
 Chat: telegram:<chat-id>
 Next safe action: continue conversation / restore memory
 ```
 
-If the workspace already existed:
+If the workspace existed and PME tooling was already present:
 
 ```
 ASSISTANT READY
@@ -207,9 +274,25 @@ Mode: DM
 Bootstrap source: PME ASSISTANT_BOOTSTRAP.md
 Memory capability: ready
 Workspace: ~/.assistant-memory (exists)
+PME tooling: ready (~/.pme/openclaw-agent-memory-infra, up to date)
 Topic: unknown (DM; restore topic = 0)
 Chat: telegram:<chat-id>
 Next safe action: continue conversation / restore memory
+```
+
+If the workspace is ready but PME tooling provisioning failed:
+
+```
+ASSISTANT READY
+
+Mode: DM
+Bootstrap source: PME ASSISTANT_BOOTSTRAP.md
+Memory capability: ready
+Workspace: ~/.assistant-memory (created / exists)
+PME tooling: blocked (<reason: git unavailable / clone failed / network error>)
+Topic: unknown (DM; restore topic = 0)
+Chat: telegram:<chat-id>
+Next safe action: continue conversation / ask for PME tooling path before restore
 ```
 
 General format (all states):
@@ -221,6 +304,7 @@ Mode: DM
 Bootstrap source: PME ASSISTANT_BOOTSTRAP.md
 Memory capability: ready / blocked
 Workspace: <path> (created / exists / error: <reason>)
+PME tooling: ready (<resolved-path>, cloned / up to date / exists) / blocked (<reason>)
 Topic: <discovered topic-id / unknown>
 Chat: <discovered chat-id / unknown>
 Next safe action: continue conversation / restore memory / ask blocking question
@@ -230,8 +314,19 @@ Next safe action: continue conversation / restore memory / ask blocking question
 
 | State | Meaning |
 |-------|---------|
-| `ready` | Workspace exists (or was just auto-created) and PME metadata is sufficient; restore can be attempted when requested |
-| `blocked` | Human requested restore but restore cannot proceed (missing metadata, missing PME repo, or unavailable commands) |
+| `ready` | Workspace exists or was auto-created; restore can be attempted when requested |
+| `blocked` | Restore cannot proceed — workspace creation failed due to filesystem error |
+
+**PME tooling states:**
+
+| State | Meaning |
+|-------|---------|
+| `ready (<path>, cloned)` | PME tooling was missing; auto-provisioned via `git clone` |
+| `ready (<path>, up to date)` | PME tooling existed; updated via `git pull` |
+| `ready (<path>, exists)` | PME tooling found at a valid path; no update attempted |
+| `blocked (<reason>)` | Auto-provisioning was attempted but failed; restore will ask for path |
+
+`Memory capability` must not become `blocked` only because PME tooling is missing or could not be provisioned. If the workspace exists or was created, `Memory capability` is `ready`.
 
 ---
 

@@ -32,7 +32,47 @@ Before running restore, verify the following:
 
 A blocking question about workspace creation is allowed **only** if the agent cannot create the workspace due to a filesystem permission error or runtime error.
 
+**`<PME_REPO>` resolution:** Use the discovery order from `ASSISTANT_BOOTSTRAP.md` section 2d. Do **not** block on a missing local PME repo — auto-provision first (see pre-step below).
+
 If any other item is unknown and cannot be inferred, ask **one blocking question** covering all missing items before proceeding.
+
+---
+
+## 2b. Pre-step: ensure PME tooling checkout
+
+Before running `refresh-memory.py` or `recover-memory.py`, the agent must:
+
+1. Resolve `PME_REPO` using the discovery order from `ASSISTANT_BOOTSTRAP.md` section 2d.
+2. If no valid path is found, auto-provision:
+   ```bash
+   mkdir -p "$HOME/.pme"
+
+   if [ ! -d "$HOME/.pme/openclaw-agent-memory-infra/.git" ]; then
+     git clone https://github.com/dparilov/openclaw-agent-memory-infra.git \
+       "$HOME/.pme/openclaw-agent-memory-infra"
+   else
+     git -C "$HOME/.pme/openclaw-agent-memory-infra" pull --ff-only
+   fi
+
+   PME_REPO="$HOME/.pme/openclaw-agent-memory-infra"
+   ```
+3. Validate that both scripts exist:
+   ```bash
+   test -f "$PME_REPO/scripts/refresh-memory.py" && \
+   test -f "$PME_REPO/scripts/recover-memory.py"
+   ```
+4. Only then proceed to the restore commands.
+
+Restore may be blocked only after auto-provisioning has been **attempted and failed**, with a concrete reason:
+- `git` unavailable;
+- clone failed;
+- pull failed;
+- scripts still missing after clone/pull;
+- permission denied;
+- `chat-id` unavailable;
+- runtime error from `refresh-memory.py` or `recover-memory.py`.
+
+See [`PME_TOOLING_CHECKOUT.md`](PME_TOOLING_CHECKOUT.md) for the full reference.
 
 ---
 
@@ -43,8 +83,8 @@ If any other item is unknown and cannot be inferred, ask **one blocking question
 For **Telegram DM** (no forum thread, `Topic: unknown (DM)`):
 
 ```bash
-python3 <PME_REPO>/scripts/refresh-memory.py \
-  --target <assistant-memory-workspace> \
+python3 "$PME_REPO"/scripts/refresh-memory.py \
+  --target "$ASSISTANT_MEMORY_WORKSPACE" \
   --topic 0:unknown \
   --read-topic \
   --chat-id <chat-id> \
@@ -56,8 +96,8 @@ python3 <PME_REPO>/scripts/refresh-memory.py \
 For **forum thread** (topic-id is known):
 
 ```bash
-python3 <PME_REPO>/scripts/refresh-memory.py \
-  --target <assistant-memory-workspace> \
+python3 "$PME_REPO"/scripts/refresh-memory.py \
+  --target "$ASSISTANT_MEMORY_WORKSPACE" \
   --topic <topic-id>:unknown \
   --read-topic \
   --chat-id <chat-id> \
@@ -74,8 +114,8 @@ python3 <PME_REPO>/scripts/refresh-memory.py \
 ### Step 2 — Recover structured memory
 
 ```bash
-python3 <PME_REPO>/scripts/recover-memory.py \
-  --target <assistant-memory-workspace> \
+python3 "$PME_REPO"/scripts/recover-memory.py \
+  --target "$ASSISTANT_MEMORY_WORKSPACE" \
   --topic <topic-id-or-0> \
   --role unknown
 ```
@@ -125,9 +165,20 @@ If restore was blocked or partially failed:
 ```
 MEMORY RESTORE BLOCKED
 
-Reason: <PME unavailable / metadata missing / read failed>
+Reason: <git unavailable / clone failed / chat-id missing / read failed>
+PME repo: <resolved path or "provisioning failed">
 Partial context: <what was found, if anything>
 Next safe action: ask blocking question / continue without memory
+```
+
+If PME tooling is ready but no prior memory exists:
+
+```
+MEMORY RESTORE: completed
+
+Workspace: ~/.assistant-memory
+PME repo: <resolved path>
+Result: no prior memory artifacts found
 ```
 
 ---
