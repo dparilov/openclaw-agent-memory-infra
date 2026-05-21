@@ -1,83 +1,51 @@
-# Pyrogram Optional Capability
+# Pyrogram Capability
 
-Pyrogram is an **optional** capability for all agent roles (CODER, REVIEWER, ASSISTANT). Its absence does not block role initialization or normal operation.
+Pyrogram provides Telegram client-mode access. The OpenClaw multi-agent system uses it for two purposes:
 
----
+1. **Handoff dispatch** — sending messages between CODER, REVIEWER, and ASSISTANT topic channels via a user session.
+2. **Telegram history import** — reading message history for memory restore (`восстанови память из Telegram`).
 
-## What Pyrogram enables
-
-| Feature | Description |
-|---------|-------------|
-| Auto-handoff dispatch | Send handoff notifications to Telegram topics via a Pyrogram user session |
-| Telegram history import | Read Telegram message history for memory restore via `refresh-memory.py` |
-
-Without Pyrogram, both features fall back gracefully:
-
-| Feature | Fallback |
-|---------|----------|
-| Auto-handoff dispatch | Manual handoff notification (agent posts summary; human forwards to target topic) |
-| Telegram history import | Local memory only (read from `~/.assistant-memory` or project workspace directly) |
+Pyrogram is **optional**. Missing Pyrogram or a session file does not block agent bootstrap or READY reporting.
 
 ---
 
-## Canonical session storage
+## Where to find Pyrogram
 
-```text
-~/.agent-secrets/pyrogram/
-  userbot.session
-  registry.yaml
-```
-
-Permissions:
+Check system Python first, then the OpenClaw-managed virtualenv
+(`~/.openclaw/workspace/.venv/lib/python3.12/site-packages`):
 
 ```bash
-chmod 700 ~/.agent-secrets/pyrogram
-chmod 600 ~/.agent-secrets/pyrogram/userbot.session
+# System Python
+python3 -c "import pyrogram" 2>/dev/null && echo "system"
+
+# OpenClaw venv
+~/.openclaw/workspace/.venv/bin/python -c "import pyrogram" 2>/dev/null && echo "venv"
 ```
 
-`registry.yaml` must not contain the session content. It contains metadata only:
-
-```yaml
-version: 1
-scope: global
-secrets:
-  - id: telegram.pyrogram.userbot
-    type: pyrogram_session
-    location: ~/.agent-secrets/pyrogram/userbot.session
-    purpose: Pyrogram user session for handoff dispatch and Telegram history import.
-    access_policy: local_only
-    owner: human
-```
+If neither location has Pyrogram: capability is `unavailable`. This does not block READY.
 
 ---
 
-## Compatibility path
+## Canonical session path
 
-`scripts/read-topic.py` (and some legacy invocations) look for the session at:
+The canonical session file is:
 
-```text
-~/.openclaw/workspace/ops/userbot.session
+```
+~/.agent-secrets/pyrogram/userbot.session
 ```
 
-If the session exists only at the canonical path, the agent MAY normalize the legacy path by creating a symlink:
-
-```bash
-mkdir -p ~/.openclaw/workspace/ops
-ln -sf ~/.agent-secrets/pyrogram/userbot.session \
-       ~/.openclaw/workspace/ops/userbot.session
-```
-
-If the session exists only at the legacy path, the agent MAY normalize it to canonical storage:
+If the session file exists at the legacy path `~/.openclaw/workspace/ops/userbot.session`
+but not the canonical path, normalize it:
 
 ```bash
 mkdir -p ~/.agent-secrets/pyrogram
-cp ~/.openclaw/workspace/ops/userbot.session \
-   ~/.agent-secrets/pyrogram/userbot.session
+cp ~/.openclaw/workspace/ops/userbot.session ~/.agent-secrets/pyrogram/userbot.session
 chmod 600 ~/.agent-secrets/pyrogram/userbot.session
-# create the symlink back
-ln -sf ~/.agent-secrets/pyrogram/userbot.session \
-       ~/.openclaw/workspace/ops/userbot.session
+# Create symlink so legacy path still resolves
+ln -sf ~/.agent-secrets/pyrogram/userbot.session ~/.openclaw/workspace/ops/userbot.session
 ```
+
+If no session file found at either path: capability is `unavailable`. This does not block READY.
 
 ---
 
@@ -88,94 +56,47 @@ Perform at bootstrap, before reporting READY.
 ### Step 1 — Check Pyrogram import
 
 ```bash
-python3 -c "import pyrogram" 2>/dev/null && echo "installed" || echo "not installed"
+python3 -c "import pyrogram" 2>/dev/null && echo "system" ||   ~/.openclaw/workspace/.venv/bin/python -c "import pyrogram" 2>/dev/null && echo "venv" ||   echo "not installed"
 ```
 
-If not installed: capability is `unavailable`. Skip steps 2–3. Report and continue.
+If not installed: capability is `unavailable`. Skip step 2. Report and continue.
 
-### Step 2 — Find session
-
-Check candidates in order:
-
-1. `$PYROGRAM_SESSION` (environment variable), if set
-2. `~/.agent-secrets/pyrogram/userbot.session`
-3. `~/.openclaw/workspace/ops/userbot.session`
-4. Any `~/.openclaw/workspace/**/*.session`
-
-First valid file found is the active session.
-
-### Step 3 — Normalize (optional)
-
-If a valid session exists outside canonical storage, the agent MAY normalize it:
+### Step 2 — Check session file
 
 ```bash
-mkdir -p ~/.agent-secrets/pyrogram
-cp <found-session> ~/.agent-secrets/pyrogram/userbot.session
-chmod 600 ~/.agent-secrets/pyrogram/userbot.session
-ln -sf ~/.agent-secrets/pyrogram/userbot.session \
-       ~/.openclaw/workspace/ops/userbot.session
+ls -la ~/.agent-secrets/pyrogram/userbot.session 2>/dev/null   || ls -la ~/.openclaw/workspace/ops/userbot.session 2>/dev/null   || echo "no session file found"
 ```
 
-Do not print session contents. Do not commit session files.
+If no session file: capability is `unavailable`. Report and continue.
+
+If session exists at legacy path only → normalize it (see above).
+
+If both Pyrogram and session are present: capability is `ready`.
 
 ---
 
-## READY capability report
+## READY report format
 
-Include in the role's READY output after `Context loaded` or equivalent last field before `Next safe action`.
-
-**Pyrogram ready:**
+Include one of these lines in your READY response:
 
 ```
-Pyrogram capability: ready
-Session: ~/.agent-secrets/pyrogram/userbot.session
-Features: auto-handoff dispatch enabled; Telegram history import enabled
+Pyrogram capability: ready (session: ~/.agent-secrets/pyrogram/userbot.session)
 ```
 
-**Pyrogram unavailable (not installed):**
+or
 
 ```
-Pyrogram capability: unavailable (pyrogram not installed)
-Affected features: auto-handoff dispatch disabled; Telegram history import disabled
-Fallback: manual handoff notification; local memory only
+Pyrogram capability: unavailable (not installed / no session; affected: auto-handoff dispatch, Telegram history import; fallback: manual notification, local memory)
 ```
-
-**Pyrogram unavailable (session not found):**
-
-```
-Pyrogram capability: unavailable (session not found)
-Affected features: auto-handoff dispatch disabled; Telegram history import disabled
-Fallback: manual handoff notification; local memory only
-```
-
-**Pyrogram unavailable — role is not blocked:**
-
-Missing Pyrogram or a missing session is **never** a blocking condition for role initialization. The role reports READY with `Pyrogram capability: unavailable` and continues normally.
 
 ---
 
-## Security rules
+## What Pyrogram absence affects
 
-Agents must not:
-
-- Print session file contents.
-- Commit `.session` files to any repository.
-- Include session contents in memory files, handoffs, PRs, or chat.
-- Ask the human to paste a Telegram login code or password in normal chat.
-- Copy session strings into `ACTIVE.md` or any handoff artifact.
-- Leave session files world-readable (enforce `600`).
-
-If a session must be created from scratch:
-
-1. Instruct the human to generate it manually (via a local `pyrogram` script or the secret-placement flow in `docs/security/SECRETS_REGISTRY_PROTOCOL.md`).
-2. Use the exchange directory flow: agent writes a template to `~/.agent-secrets/exchange/templates/`; human uploads completed session to `~/.agent-secrets/exchange/incoming/`.
-3. Agent installs from `incoming/` to canonical path, sets `600`, never prints the file.
-
----
-
-## Related docs
-
-- [SECRETS_REGISTRY_PROTOCOL.md](SECRETS_REGISTRY_PROTOCOL.md) — registry format and missing-secret flow
-- [AGENT_SECRET_ACCESS_RULES.md](AGENT_SECRET_ACCESS_RULES.md) — agent access rules for secrets
-- [WINDOWS_TO_LINUX_SECRET_PLACEMENT.md](WINDOWS_TO_LINUX_SECRET_PLACEMENT.md) — uploading session files from Windows
-- [HANDOFF_DISPATCH_CONFIG.md](../agent-collaboration/HANDOFF_DISPATCH_CONFIG.md) — handoff dispatch configuration
+| Feature | Without Pyrogram |
+|---------|-----------------|
+| Auto handoff dispatch | Manual notification required |
+| Telegram history import | Not available; use local memory only |
+| Local memory restore | ✅ Unaffected |
+| CODER/REVIEWER bootstrap | ✅ Unaffected |
+| ASSISTANT bootstrap | ✅ Unaffected |
